@@ -98,9 +98,20 @@ process.on('unhandledRejection', (reason) => {
 
 // ── Connect to Discord ────────────────────────────────────────────────────────
 client.login(token).catch((err) => {
-  console.error('[ERROR] Failed to log in:', err.message);
-  console.error(
-    '        Make sure your DISCORD_TOKEN in .env is correct and the bot is not banned.',
-  );
+  if (err.message && err.message.includes('disallowed intents')) {
+    console.error('[ERROR] Privileged intent not enabled in the Discord Developer Portal.');
+    console.error('');
+    console.error('  The bot needs the "Message Content Intent" to read prefix commands.');
+    console.error('  Fix it in 30 seconds:');
+    console.error('  1. Go to https://discord.com/developers/applications');
+    console.error('  2. Select your application → Bot tab');
+    console.error('  3. Scroll to "Privileged Gateway Intents"');
+    console.error('  4. Toggle ON "Message Content Intent"');
+    console.error('  5. Click Save Changes');
+    console.error('  6. The workflow will restart automatically.');
+  } else {
+    console.error('[ERROR] Failed to log in:', err.message);
+    console.error('        Make sure your DISCORD_TOKEN is correct and the bot is not banned.');
+  }
   process.exit(1);
 });
