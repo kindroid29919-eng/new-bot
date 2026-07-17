@@ -7,10 +7,16 @@
     "start": "node index.js",
     "dev": "nodemon index.js"
   },
-  "keywords": ["discord", "bot", "expose", "discordjs"],
+  "keywords": [
+    "discord",
+    "bot",
+    "expose",
+    "discordjs"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.2",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5"
   },
