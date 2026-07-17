@@ -71,4 +71,9 @@ function usageEmbed() {
     .setTimestamp();
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Kick a member from the server',
+  usage: 'kick <@user> [reason]',
+  category: 'Moderation',
+};

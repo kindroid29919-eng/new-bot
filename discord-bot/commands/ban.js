@@ -71,4 +71,9 @@ function usageEmbed() {
     .setTimestamp();
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Ban a member from the server',
+  usage: 'ban <@user> [reason]',
+  category: 'Moderation',
+};

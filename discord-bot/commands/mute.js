@@ -153,4 +153,9 @@ function usageEmbed() {
     .setTimestamp();
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Mute a member indefinitely (or for a set duration) using the Muted role',
+  usage: 'mute <@user> [duration] [reason]',
+  category: 'Moderation',
+};

@@ -75,4 +75,9 @@ async function execute(message) {
   await message.reply({ embeds: [embed] });
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Show the member count breakdown for this server',
+  usage: 'members',
+  category: 'Info',
+};

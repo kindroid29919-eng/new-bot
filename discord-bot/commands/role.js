@@ -311,4 +311,9 @@ function helpEmbed(note) {
   return embed;
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Add, remove, create, delete, or bulk-assign roles',
+  usage: 'role <add|remove|create|delete|all|removeall|bots|commands> ...',
+  category: 'Moderation',
+};

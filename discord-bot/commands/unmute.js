@@ -73,4 +73,9 @@ function usageEmbed() {
     .setTimestamp();
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Remove the Muted role from a member',
+  usage: 'unmute <@user> [reason]',
+  category: 'Moderation',
+};

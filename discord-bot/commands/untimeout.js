@@ -72,4 +72,10 @@ function usageEmbed() {
     .setTimestamp();
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Remove an active timeout from a member',
+  usage: 'untimeout <@user> [reason]',
+  category: 'Moderation',
+  aliases: ['removetimeout'],
+};

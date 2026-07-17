@@ -100,4 +100,9 @@ function errorEmbed(desc) {
   return new EmbedBuilder().setColor(0xff4757).setTitle('❌  Error').setDescription(desc).setTimestamp();
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Wipe an entire channel by cloning and deleting it (requires confirmation)',
+  usage: 'nuke',
+  category: 'Moderation',
+};

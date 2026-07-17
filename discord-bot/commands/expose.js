@@ -60,4 +60,9 @@ async function execute(message, args) {
   }
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Expose someone with a random roast',
+  usage: 'expose <name | @user>',
+  category: 'Fun',
+};

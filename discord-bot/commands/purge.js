@@ -90,4 +90,9 @@ function usageEmbed() {
     .setTimestamp();
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Bulk-delete recent messages from the current channel',
+  usage: 'purge <count>',
+  category: 'Moderation',
+};

@@ -14,7 +14,10 @@
 // e.g. on Replit where secrets are already in process.env via the vault).
 require('dotenv').config({ override: false });
 
-const { Client, GatewayIntentBits, Partials, PresenceUpdateStatus } = require('discord.js');
+const fs   = require('fs');
+const path = require('path');
+
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { prefix, token } = require('./config/config');
 
 // ── Sanity-check the token ────────────────────────────────────────────────────
@@ -40,26 +43,32 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel],
 });
 
-// ── Load command modules ──────────────────────────────────────────────────────
-// Each command lives in commands/<name>.js and exports an execute() function.
-const commands = {
-  expose:     require('./commands/expose'),
-  help:       require('./commands/help'),
-  ban:        require('./commands/ban'),
-  kick:       require('./commands/kick'),
-  timeout:    require('./commands/timeout'),
-  serverinfo: require('./commands/serverinfo'),
-  members:    require('./commands/members'),
-};
+// ── Auto-scan command modules ─────────────────────────────────────────────────
+// Every .js file dropped into commands/ is loaded automatically.
+// A command file must export { execute }.
+// Optional exports:  aliases (string[]), description, usage, category.
+const commands = new Map();   // commandName  → module
+const aliasMap = new Map();   // aliasName    → module
+
+const commandsDir = path.join(__dirname, 'commands');
+for (const file of fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'))) {
+  const mod  = require(path.join(commandsDir, file));
+  const name = path.basename(file, '.js');
+  commands.set(name, mod);
+  if (Array.isArray(mod.aliases)) {
+    for (const alias of mod.aliases) aliasMap.set(alias, mod);
+  }
+}
 
 // ── Event: Bot is ready ───────────────────────────────────────────────────────
 client.once('ready', () => {
   console.log(`✅  Logged in as ${client.user.tag}`);
   console.log(`🔧  Prefix: ${prefix}`);
-  console.log(`📦  Commands loaded: ${Object.keys(commands).join(', ')}`);
+  console.log(`📦  Commands loaded: ${[...commands.keys()].join(', ')}`);
+  if (aliasMap.size) console.log(`🔀  Aliases loaded: ${[...aliasMap.keys()].join(', ')}`);
 
   // Set the bot's activity status
-  client.user.setActivity(`${prefix}expose | Watching 👀`, { type: 3 /* Watching */ });
+  client.user.setActivity(`${prefix}help | ${commands.size} commands`, { type: 3 /* Watching */ });
 });
 
 // ── Event: Message received ───────────────────────────────────────────────────
@@ -74,17 +83,17 @@ client.on('messageCreate', async (message) => {
   const [rawCommandName, ...args] = withoutPrefix.split(/\s+/);
   const commandName = rawCommandName.toLowerCase(); // case-insensitive matching
 
-  // Look up the command handler
-  const command = commands[commandName];
+  // Look up the command handler (by name or alias)
+  const command = commands.get(commandName) || aliasMap.get(commandName);
 
   if (!command) {
     // Unknown command — silently ignore (no spam for typos)
     return;
   }
 
-  // Execute the command, catching any unexpected errors
+  // Execute the command, passing the commands map so help can read it dynamically
   try {
-    await command.execute(message, args);
+    await command.execute(message, args, commands);
   } catch (error) {
     console.error(`[ERROR] Command "${commandName}" threw an error:`, error);
 

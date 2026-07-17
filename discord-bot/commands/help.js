@@ -1,62 +1,67 @@
 /**
  * help.js — x!help
- * Lists all available commands with usage examples.
+ * Dynamically builds the command list from the loaded commands map.
+ * No manual updates needed — adding a new command file with a `category`
+ * export is all that's required.
  */
 
 const { EmbedBuilder } = require('discord.js');
 const { prefix } = require('../config/config');
 
-async function execute(message) {
+// Category display order and emoji
+const CATEGORY_META = {
+  Fun:        { emoji: '🚨', order: 0 },
+  Moderation: { emoji: '🔨', order: 1 },
+  Info:       { emoji: '📊', order: 2 },
+};
+
+async function execute(message, _args, commands) {
+  // Group commands by category
+  const groups = new Map();
+
+  for (const [name, mod] of commands) {
+    if (!mod.description) continue; // skip commands with no metadata
+
+    const cat = mod.category || 'Other';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push({ name, mod });
+  }
+
+  // Sort categories by defined order, then alphabetically
+  const sorted = [...groups.entries()].sort(([a], [b]) => {
+    const orderA = CATEGORY_META[a]?.order ?? 99;
+    const orderB = CATEGORY_META[b]?.order ?? 99;
+    return orderA !== orderB ? orderA - orderB : a.localeCompare(b);
+  });
+
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('📖  Command List')
-    .setDescription(`Prefix: \`${prefix}\`  •  Use \`${prefix}help\` to see this menu anytime.`)
-    .addFields(
-      {
-        name: '🚨 Fun',
-        value: [
-          `\`${prefix}expose <name/@user>\` — Expose someone with a random roast`,
-        ].join('\n'),
-      },
-      {
-        name: '🔨 Moderation',
-        value: [
-          `\`${prefix}ban <@user> [reason]\` — Ban a member`,
-          `\`${prefix}unban <userID/username> [reason]\` — Unban a member`,
-          `\`${prefix}kick <@user> [reason]\` — Kick a member`,
-          `\`${prefix}timeout <@user> <duration> [reason]\` — Timeout a member (e.g. \`10m\`, \`2h\`, \`1d\`, \`1w\`)`,
-          `\`${prefix}untimeout <@user> [reason]\` — Remove a member's timeout`,
-          `\`${prefix}mute <@user> [duration] [reason]\` — Mute a member indefinitely (or for a duration)`,
-          `\`${prefix}unmute <@user> [reason]\` — Unmute a member`,
-          `\`${prefix}purge <count>\` — Bulk delete recent messages`,
-          `\`${prefix}nuke\` — Wipe the entire channel (confirmation required)`,
-        ].join('\n'),
-      },
-      {
-        name: '🎭 Roles',
-        value: [
-          `\`${prefix}role add <@user> <role>\` — Give a member a role`,
-          `\`${prefix}role remove <@user> <role>\` — Take a role from a member`,
-          `\`${prefix}role create <name> [hexColor]\` — Create a new role`,
-          `\`${prefix}role delete <role>\` — Delete a role`,
-          `\`${prefix}role all <role>\` — Add a role to every member`,
-          `\`${prefix}role removeall <role>\` — Remove a role from every member`,
-          `\`${prefix}role bots <role>\` — Add a role to every bot`,
-          `\`${prefix}role commands\` — Show role subcommand help`,
-        ].join('\n'),
-      },
-      {
-        name: '📊 Server Info',
-        value: [
-          `\`${prefix}serverinfo\` — Show server details`,
-          `\`${prefix}members\` — Show member count`,
-        ].join('\n'),
-      },
-    )
-    .setFooter({ text: `Requested by ${message.author.tag}` })
+    .setDescription(`Prefix: \`${prefix}\`  •  Use \`${prefix}help\` to see this menu anytime.`);
+
+  for (const [cat, entries] of sorted) {
+    const emoji = CATEGORY_META[cat]?.emoji ?? '⚙️';
+
+    const lines = entries
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(({ name, mod }) => {
+        const aliases = mod.aliases?.length ? ` *(also: ${mod.aliases.map(a => `\`${prefix}${a}\``).join(', ')})* ` : '';
+        return `\`${prefix}${mod.usage || name}\`${aliases}— ${mod.description}`;
+      });
+
+    embed.addFields({ name: `${emoji} ${cat}`, value: lines.join('\n') });
+  }
+
+  embed
+    .setFooter({ text: `Requested by ${message.author.tag}  •  ${commands.size} commands loaded` })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Show all available commands',
+  usage: 'help',
+  category: 'Info',
+};

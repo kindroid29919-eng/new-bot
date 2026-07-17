@@ -113,4 +113,9 @@ function usageEmbed() {
     .setTimestamp();
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Timeout (mute) a member for a set duration',
+  usage: 'timeout <@user> <minutes> [reason]',
+  category: 'Moderation',
+};

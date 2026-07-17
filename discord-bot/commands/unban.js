@@ -90,4 +90,9 @@ function usageEmbed() {
     .setTimestamp();
 }
 
-module.exports = { execute };
+module.exports = {
+  execute,
+  description: 'Unban a user by ID or username',
+  usage: 'unban <userID | username> [reason]',
+  category: 'Moderation',
+};
