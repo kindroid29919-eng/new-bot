@@ -22,8 +22,27 @@ async function execute(message) {
         name: '🔨 Moderation',
         value: [
           `\`${prefix}ban <@user> [reason]\` — Ban a member`,
+          `\`${prefix}unban <userID/username> [reason]\` — Unban a member`,
           `\`${prefix}kick <@user> [reason]\` — Kick a member`,
-          `\`${prefix}timeout <@user> <minutes> [reason]\` — Timeout a member`,
+          `\`${prefix}timeout <@user> <duration> [reason]\` — Timeout a member (e.g. \`10m\`, \`2h\`, \`1d\`, \`1w\`)`,
+          `\`${prefix}untimeout <@user> [reason]\` — Remove a member's timeout`,
+          `\`${prefix}mute <@user> [duration] [reason]\` — Mute a member indefinitely (or for a duration)`,
+          `\`${prefix}unmute <@user> [reason]\` — Unmute a member`,
+          `\`${prefix}purge <count>\` — Bulk delete recent messages`,
+          `\`${prefix}nuke\` — Wipe the entire channel (confirmation required)`,
+        ].join('\n'),
+      },
+      {
+        name: '🎭 Roles',
+        value: [
+          `\`${prefix}role add <@user> <role>\` — Give a member a role`,
+          `\`${prefix}role remove <@user> <role>\` — Take a role from a member`,
+          `\`${prefix}role create <name> [hexColor]\` — Create a new role`,
+          `\`${prefix}role delete <role>\` — Delete a role`,
+          `\`${prefix}role all <role>\` — Add a role to every member`,
+          `\`${prefix}role removeall <role>\` — Remove a role from every member`,
+          `\`${prefix}role bots <role>\` — Add a role to every bot`,
+          `\`${prefix}role commands\` — Show role subcommand help`,
         ].join('\n'),
       },
       {

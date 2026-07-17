@@ -1,14 +1,26 @@
 /**
  * timeout.js — x!timeout
- * Times out (mutes) a mentioned member for a specified number of minutes.
+ * Times out (mutes) a mentioned member using Discord's native timeout.
  * Requires: Moderate Members permission for both the bot and the command user.
  *
- * Usage: x!timeout <@user> <minutes> [reason]
+ * Usage: x!timeout <@user> <duration> [reason]
+ * Duration understands:
+ *   - A bare number         → minutes, e.g. `10`
+ *   - Shorthand units       → `10m`, `2h`, `1d`, `1w`
+ *   - Full words            → `10 minutes`, `2 hours`, `1 day`, `1 week`
+ *   - Combined shorthand    → `1d12h`, `2h30m`
+ *
+ * Examples:
+ *   x!timeout @Ahad 10          → 10 minutes
+ *   x!timeout @Ahad 2h spamming → 2 hours
+ *   x!timeout @Ahad 1d          → 1 day
+ *   x!timeout @Ahad 1w          → 1 week (Discord's max)
  */
 
 const { EmbedBuilder } = require('discord.js');
+const { parseDuration } = require('../utils/duration');
 
-const MAX_MINUTES = 40320; // Discord's max timeout: 28 days
+const MAX_MS = 28 * 24 * 60 * 60 * 1000; // Discord's hard cap: 28 days
 
 async function execute(message, args) {
   // ── Permission check ────────────────────────────────────────────────────────
@@ -25,11 +37,27 @@ async function execute(message, args) {
     return message.reply({ embeds: [usageEmbed()] });
   }
 
-  const minutes = parseInt(args[1], 10);
-  if (!minutes || minutes <= 0 || minutes > MAX_MINUTES) {
+  // ── Duration parsing (smart: minutes, "10m", "2h", "1d", "1w", full words, combos) ──
+  let parsed = parseDuration(args[1]);
+  let reasonStartIndex = 2;
+
+  // Allow a two-token duration like "2 hours" (args[1] = "2", args[2] = "hours")
+  if (!parsed && args[1] && args[2]) {
+    const combined = parseDuration(`${args[1]} ${args[2]}`);
+    if (combined) {
+      parsed = combined;
+      reasonStartIndex = 3;
+    }
+  }
+
+  if (!parsed) {
     return message.reply({
-      embeds: [errorEmbed(`Please provide a valid duration between **1** and **${MAX_MINUTES.toLocaleString()}** minutes (28 days max).`)],
+      embeds: [errorEmbed('Please provide a valid duration, e.g. `10`, `10m`, `2h`, `1d`, `1w`, or `2 hours`.')],
     });
+  }
+
+  if (parsed.ms > MAX_MS) {
+    return message.reply({ embeds: [errorEmbed('Duration is too long. Discord allows a maximum timeout of **28 days**.')] });
   }
 
   if (target.id === message.author.id) {
@@ -40,19 +68,11 @@ async function execute(message, args) {
     return message.reply({ embeds: [errorEmbed('I cannot timeout that member. They may have a higher role than me.')] });
   }
 
-  const reason = args.slice(2).join(' ') || 'No reason provided.';
-  const durationMs = minutes * 60 * 1000;
+  const reason = args.slice(reasonStartIndex).join(' ') || 'No reason provided.';
 
   // ── Execute ─────────────────────────────────────────────────────────────────
   try {
-    await target.timeout(durationMs, `${message.author.tag}: ${reason}`);
-
-    // Human-readable duration
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    const durationText = hours > 0
-      ? `${hours}h ${mins > 0 ? `${mins}m` : ''}`.trim()
-      : `${mins}m`;
+    await target.timeout(parsed.ms, `${message.author.tag}: ${reason}`);
 
     const embed = new EmbedBuilder()
       .setColor(0xffd32a)
@@ -60,7 +80,7 @@ async function execute(message, args) {
       .addFields(
         { name: 'User', value: `${target.user.tag} (${target.id})`, inline: true },
         { name: 'Timed out by', value: message.author.tag, inline: true },
-        { name: 'Duration', value: durationText, inline: true },
+        { name: 'Duration', value: parsed.text, inline: true },
         { name: 'Reason', value: reason },
       )
       .setThumbnail(target.user.displayAvatarURL())
@@ -85,7 +105,11 @@ function usageEmbed() {
   return new EmbedBuilder()
     .setColor(0xff4757)
     .setTitle('❌  Invalid Usage')
-    .setDescription('**Usage:** `x!timeout <@user> <minutes> [reason]`\n**Example:** `x!timeout @Ahad 10 spamming`')
+    .setDescription(
+      '**Usage:** `x!timeout <@user> <duration> [reason]`\n' +
+      '**Duration examples:** `10`, `10m`, `2h`, `1d`, `1w`, `1d12h`, `2 hours`\n' +
+      '**Example:** `x!timeout @Ahad 2h spamming`',
+    )
     .setTimestamp();
 }
 
