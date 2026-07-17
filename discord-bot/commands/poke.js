@@ -1,5 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { reasons, reactions, emojis } = require('../data/pokes.js');
+const { getGif } = require('../utils/nekosGif.js');
 
 const recentCache = [];
 
@@ -34,6 +35,12 @@ async function execute(message, args) {
       { name: 'Reaction', value: reaction, inline: true }
     )
     .setTimestamp();
+
+  const gif = await getGif('poke');
+  if (gif) {
+    embed.setImage(gif.url);
+    if (gif.anime_name) embed.setFooter({ text: `Source: ${gif.anime_name}` });
+  }
 
   await message.reply({ embeds: [embed] });
 }

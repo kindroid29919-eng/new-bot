@@ -1,5 +1,5 @@
 const { EmbedBuilder } = require('discord.js');
-const { styles, messages, emojis } = require('../data/hugs.js');
+const { styles, messages, emojis } = require('../data/kisses.js');
 const { getGif } = require('../utils/nekosGif.js');
 
 const recentCache = [];
@@ -7,7 +7,7 @@ const recentCache = [];
 async function execute(message, args) {
   if (!args.length) {
     return message.reply({
-      embeds: [new EmbedBuilder().setColor(0xff4757).setTitle('❌  Usage Error').setDescription('`x!hug <user>`').setTimestamp()],
+      embeds: [new EmbedBuilder().setColor(0xff4757).setTitle('❌  Usage Error').setDescription('`x!kiss <user>`').setTimestamp()],
     });
   }
 
@@ -27,13 +27,13 @@ async function execute(message, args) {
   const emoji = emojis[Math.floor(Math.random() * emojis.length)];
 
   const embed = new EmbedBuilder()
-    .setColor(0x1dd1a1)
-    .setTitle(`${emoji}  Incoming Hug!`)
+    .setColor(0xff6b9d)
+    .setTitle(`${emoji}  Smooch!`)
     .setDescription(`**${message.author.username}** gave **${targetName}** ${style}!`)
     .addFields({ name: 'Result', value: msg, inline: false })
     .setTimestamp();
 
-  const gif = await getGif('hug');
+  const gif = await getGif('kiss');
   if (gif) {
     embed.setImage(gif.url);
     if (gif.anime_name) embed.setFooter({ text: `Source: ${gif.anime_name}` });
@@ -42,4 +42,4 @@ async function execute(message, args) {
   await message.reply({ embeds: [embed] });
 }
 
-module.exports = { execute, name: 'hug', aliases: ['cuddle', 'embrace'], description: 'Give someone a wholesome hug!', usage: 'hug <user>', category: 'Social' };
+module.exports = { execute, name: 'kiss', aliases: ['smooch'], description: 'Give someone a sweet kiss!', usage: 'kiss <user>', category: 'Social' };

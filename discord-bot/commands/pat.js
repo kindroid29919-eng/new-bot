@@ -1,5 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { styles, reactions, emojis } = require('../data/pats.js');
+const { getGif } = require('../utils/nekosGif.js');
 
 const recentCache = [];
 
@@ -31,6 +32,12 @@ async function execute(message, args) {
     .setDescription(`**${message.author.username}** gave **${targetName}** some ${style}.`)
     .addFields({ name: 'Reaction', value: reaction, inline: false })
     .setTimestamp();
+
+  const gif = await getGif('pat');
+  if (gif) {
+    embed.setImage(gif.url);
+    if (gif.anime_name) embed.setFooter({ text: `Source: ${gif.anime_name}` });
+  }
 
   await message.reply({ embeds: [embed] });
 }

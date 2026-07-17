@@ -1,5 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { objects, sounds, reactions } = require('../data/slaps.js');
+const { getGif } = require('../utils/nekosGif.js');
 
 const recentCache = [];
 
@@ -32,8 +33,16 @@ async function execute(message, args) {
       { name: 'Sound', value: `**${sound}**`, inline: true },
       { name: 'Impact', value: reaction, inline: true }
     )
-    .setFooter({ text: 'No actual users were harmed in the making of this slap.' })
     .setTimestamp();
+
+  const gif = await getGif('slap');
+  const footerBase = 'No actual users were harmed in the making of this slap.';
+  if (gif) {
+    embed.setImage(gif.url);
+    embed.setFooter({ text: gif.anime_name ? `${footerBase} · Source: ${gif.anime_name}` : footerBase });
+  } else {
+    embed.setFooter({ text: footerBase });
+  }
 
   await message.reply({ embeds: [embed] });
 }
