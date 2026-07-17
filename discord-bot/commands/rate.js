@@ -10,12 +10,14 @@
 const { EmbedBuilder } = require('discord.js');
 
 // ── Categories ───────────────────────────────────────────────────────────────
+// yapping is random but inversely weighted — high other scores → low yapping, and vice versa.
+// yapping is always SUBTRACTED from the overall (high yapping = bad).
 const CATEGORIES = [
   { key: 'gameplay', label: '🎮 Gameplay' },
   { key: 'skills',   label: '⚔️  Skills'   },
   { key: 'impact',   label: '💥 Impact'   },
   { key: 'body',     label: '💪 Body'     },
-  { key: 'yapping',  label: '🗣️  Yapping', fixed: 10, subtract: true },
+  { key: 'yapping',  label: '🗣️  Yapping', subtract: true },
 ];
 
 // ── 15 Levels (score range: -6 → 30) ────────────────────────────────────────
@@ -86,15 +88,25 @@ async function execute(message, args) {
   const mention = message.mentions.members?.first();
   const target  = mention ? mention.displayName : args.join(' ');
 
-  // Generate scores
+  // Generate scores for the 4 main categories first
   const scores = {};
   let overall  = 0;
 
-  for (const cat of CATEGORIES) {
-    const score = cat.fixed !== undefined ? cat.fixed : rand(1, 10);
+  const mainCats = CATEGORIES.filter(c => !c.subtract);
+  for (const cat of mainCats) {
+    const score = rand(1, 10);
     scores[cat.key] = score;
-    overall += cat.subtract ? -score : score;
+    overall += score;
   }
+
+  // Yapping is inversely weighted: high main stats → low yapping, low main stats → high yapping.
+  // Base = 11 - avg, then add ±2 noise, clamped to 1–10.
+  const avgMain     = overall / mainCats.length;
+  const yappingBase = 11 - avgMain;
+  const yappingNoise = rand(-2, 2);
+  const yappingScore = Math.min(10, Math.max(1, Math.round(yappingBase + yappingNoise)));
+  scores['yapping']  = yappingScore;
+  overall           -= yappingScore; // subtract because high yapping is bad
 
   const level = getLevel(overall);
   const color = LEVEL_COLORS[level.label] ?? 0x5865f2;
