@@ -14,7 +14,7 @@
 // e.g. on Replit where secrets are already in process.env via the vault).
 require('dotenv').config({ override: false });
 
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, PresenceUpdateStatus } = require('discord.js');
 const { prefix, token } = require('./config/config');
 
 // ── Sanity-check the token ────────────────────────────────────────────────────
@@ -35,6 +35,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,          // Access guild (server) data
     GatewayIntentBits.GuildMessages,   // Receive message events in guilds
     GatewayIntentBits.MessageContent,  // Read message content (PRIVILEGED — enable in Dev Portal)
+    GatewayIntentBits.GuildMembers,    // Needed for member count / moderation targets
   ],
   partials: [Partials.Message, Partials.Channel],
 });
@@ -42,7 +43,13 @@ const client = new Client({
 // ── Load command modules ──────────────────────────────────────────────────────
 // Each command lives in commands/<name>.js and exports an execute() function.
 const commands = {
-  expose: require('./commands/expose'),
+  expose:     require('./commands/expose'),
+  help:       require('./commands/help'),
+  ban:        require('./commands/ban'),
+  kick:       require('./commands/kick'),
+  timeout:    require('./commands/timeout'),
+  serverinfo: require('./commands/serverinfo'),
+  members:    require('./commands/members'),
 };
 
 // ── Event: Bot is ready ───────────────────────────────────────────────────────
