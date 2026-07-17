@@ -1,5 +1,5 @@
 const { EmbedBuilder } = require('discord.js');
-const { styles, sounds, reactions } = require('../data/kicks.js');
+const { styles, sounds, reactions } = require('../data/punches.js');
 const { getGif } = require('../utils/nekosGif.js');
 
 const recentCache = [];
@@ -7,7 +7,7 @@ const recentCache = [];
 async function execute(message, args) {
   if (!args.length) {
     return message.reply({
-      embeds: [new EmbedBuilder().setColor(0xff4757).setTitle('❌  Usage Error').setDescription('`x!kick <user>`').setTimestamp()],
+      embeds: [new EmbedBuilder().setColor(0xff4757).setTitle('❌  Usage Error').setDescription('`x!punch <user>`').setTimestamp()],
     });
   }
 
@@ -26,8 +26,8 @@ async function execute(message, args) {
   if (recentCache.length > 15) recentCache.shift();
 
   const embed = new EmbedBuilder()
-    .setColor(0xf39c12)
-    .setTitle('🦵  BOOT!')
+    .setColor(0xe74c3c)
+    .setTitle('👊  POW!')
     .setDescription(`**${message.author.username}** hit **${targetName}** with ${style}!`)
     .addFields(
       { name: 'Sound', value: `**${sound}**`, inline: true },
@@ -35,12 +35,12 @@ async function execute(message, args) {
     )
     .setTimestamp();
 
-  const gif = await getGif('kick');
-  const footerBase = 'No actual users were harmed in the making of this kick.';
+  const gif = await getGif('punch');
+  const footerBase = 'No actual users were harmed in the making of this punch.';
   embed.setFooter({ text: gif?.anime_name ? `${footerBase} · Source: ${gif.anime_name}` : footerBase });
   if (gif) embed.setImage(gif.url);
 
   await message.reply({ embeds: [embed] });
 }
 
-module.exports = { execute, name: 'kick', aliases: ['boot'], description: 'Send someone flying with a cartoonish kick!', usage: 'kick <user>', category: 'Social' };
+module.exports = { execute, name: 'punch', aliases: ['sock'], description: 'Throw a cartoonish punch at someone!', usage: 'punch <user>', category: 'Social' };
