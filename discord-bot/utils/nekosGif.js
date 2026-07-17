@@ -26,7 +26,13 @@ async function getGif(category, timeoutMs = 4000) {
     const result = data?.results?.[0];
     if (!result?.url) return null;
 
-    return { url: result.url, anime_name: result.anime_name };
+    return {
+      url: result.url,
+      anime_name: result.anime_name,
+      artist_name: result.artist_name,
+      artist_href: result.artist_href,
+      source_url: result.source_url,
+    };
   } catch (err) {
     // Network error, timeout, or bad JSON — fail silently and let the
     // caller fall back to a text-only embed.
