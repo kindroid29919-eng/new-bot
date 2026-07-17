@@ -113,10 +113,9 @@ async function execute(message, args) {
 
   // Build fields string
   const lines = CATEGORIES.map(cat => {
-    const score    = scores[cat.key];
-    const barStr   = bar(score);
-    const modifier = cat.subtract ? '  *(yapping — subtracted)*' : '';
-    return `${cat.label}\n\`${barStr}\` **${score}/10**${modifier}`;
+    const score  = scores[cat.key];
+    const barStr = bar(score);
+    return `${cat.label}\n\`${barStr}\` **${score}/10**`;
   });
 
   const embed = new EmbedBuilder()
