@@ -1,8 +1,0 @@
-uploads = []
-generated = []
-
-[[outputs]]
-id = "c5ZCh1zcI21fKGgv1uGNB"
-uri = "file://expose-bot.zip"
-type = "unspecified"
-title = "expose-bot.zip — ready to upload to Discloud"
