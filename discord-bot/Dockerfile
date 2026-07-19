@@ -1,14 +1,13 @@
 FROM node:20-slim
 
-# Enable pnpm via corepack
-RUN corepack enable
-
 WORKDIR /app
 
-# Copy lockfile + package.json files first for better layer caching
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY . .
+# Copy dependency manifests first for better layer caching
+COPY package.json package-lock.json ./
 
-RUN pnpm install --no-frozen-lockfile
+RUN npm ci --omit=dev
+
+# Copy the rest of the source
+COPY . .
 
 CMD ["node", "index.js"]
