@@ -3,16 +3,11 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Entry point for the Discord bot.
  *
- * • Loads environment variables from .env via dotenv
  * • Creates the Discord client with the minimum required intents
  * • Registers a prefix-based command router (prefix: x!)
- * • Connects to Discord using the token stored in .env
+ * • Connects to Discord using the token stored in process.env
  * ─────────────────────────────────────────────────────────────────────────────
  */
-
-// Load .env variables when running locally (no-op if .env doesn't exist,
-// e.g. on Replit where secrets are already in process.env via the vault).
-require('dotenv').config({ override: false });
 
 const fs   = require('fs');
 const path = require('path');
@@ -23,8 +18,8 @@ const { prefix, token } = require('./config/config');
 // ── Sanity-check the token ────────────────────────────────────────────────────
 if (!token) {
   console.error(
-    '[ERROR] DISCORD_TOKEN is missing from your .env file.\n' +
-      '        Copy .env.example to .env and paste your bot token.',
+    '[ERROR] DISCORD_TOKEN is missing.\n' +
+      '        Set it as an environment variable in your hosting platform.',
   );
   process.exit(1);
 }
