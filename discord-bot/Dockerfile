@@ -1,13 +1,17 @@
-FROM node:20-slim
+FROM --platform=linux/amd64 node:20-slim
 
 WORKDIR /app
 
 # Build tools in case @napi-rs/canvas has no prebuilt binary for this platform
 RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
+# Later npm versions include partial fixes for the "Exit handler never called"
+# bug, so upgrade before we rely on npm for the real install below.
+RUN npm install -g npm@latest
+
 # Cache-buster: bump this number any time you need to force a truly clean
 # rebuild and skip Docker's layer cache below this point.
-ARG CACHEBUST=1
+ARG CACHEBUST=2
 
 # Copy dependency manifests first for better layer caching
 COPY package.json package-lock.json ./
