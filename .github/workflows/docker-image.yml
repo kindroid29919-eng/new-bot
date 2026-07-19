@@ -29,6 +29,7 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./discord-bot
+          file: ./discord-bot/Dockerfile
           push: true
           tags: ghcr.io/kindroid29919-eng/expose-bot:latest
