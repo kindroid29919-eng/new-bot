@@ -5,6 +5,12 @@
 
 const BASE_URL = 'https://nekos.best/api/v2';
 
+// nekos.best requires a unique, non-generic User-Agent in the format
+// "APP_NAME (CONTACT_INFO)". Generic names like "bot" or missing real
+// contact info will get requests blocked with a 403.
+// See: https://docs.nekos.best/getting-started/api-reference.html#user-agent
+const USER_AGENT = 'Expose-Bot (ahadsg26@gmail.com)';
+
 /**
  * @param {string} category one of: hug, kiss, pat, poke, slap (etc.)
  * @param {number} timeoutMs
@@ -18,7 +24,7 @@ async function getGif(category, timeoutMs = 6000) {
     try {
       const res = await fetch(`${BASE_URL}/${category}?amount=1`, {
         signal: controller.signal,
-        headers: { 'User-Agent': 'social-commands-bot/1.0 (discord)' },
+        headers: { 'User-Agent': USER_AGENT },
       });
 
       if (!res.ok) {
