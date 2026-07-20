@@ -16,21 +16,21 @@ const { getType, TYPE_EMOJI, TIER_EMOJI } = require('../utils/battleEngine.js');
 const SHOP_ITEMS = [
   {
     id: 1,
-    name: 'Tokisaki Kurumi',
+    name: 'Kurumi Tokisaki',
     source: 'Date A Live',
     tier: 'Legendary',
-    characterId: 45748,
+    characterId: 70069,
     price: 3000,
-    imageUrl: null, // set to AniList image URL when known
+    imageUrl: 'https://s4.anilist.co/file/anilistcdn/character/large/b70069-DEV7X6o2L7oG.jpg',
   },
   {
     id: 2,
     name: 'Mahiru Shiina',
     source: 'Otonari no Tenshi-sama',
     tier: 'Legendary',
-    characterId: 192342,
+    characterId: 195602,
     price: 3000,
-    imageUrl: null,
+    imageUrl: 'https://s4.anilist.co/file/anilistcdn/character/large/b195602-Cc0vrUDl7r15.png',
   },
 ];
 
