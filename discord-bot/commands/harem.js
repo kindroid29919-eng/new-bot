@@ -1,15 +1,9 @@
 const { EmbedBuilder } = require('discord.js');
 const db = require('../utils/db.js');
 
-const tierEmoji = {
-  Legendary: '🌟',
-  Epic: '💎',
-  Rare: '🔥',
-  Uncommon: '✨',
-  Common: '⚪',
-};
+const tierEmoji = { Legendary: '🌟', Epic: '💎', Rare: '🔥', Uncommon: '✨', Common: '⚪' };
 
-async function execute(message, args) {
+async function execute(message) {
   const target = message.mentions.users.first() || message.author;
   const rows = await db.getHarem(target.id);
 
@@ -22,28 +16,15 @@ async function execute(message, args) {
     );
   }
 
-  // Group by tier for a readable summary
-  const byTier = {};
-  for (const row of rows) {
-    (byTier[row.tier] ||= []).push(row);
-  }
-
-  const order = ['Legendary', 'Epic', 'Rare', 'Uncommon', 'Common'];
-  const lines = [];
-  for (const tier of order) {
-    const group = byTier[tier];
-    if (!group?.length) continue;
-    lines.push(`\n**${tierEmoji[tier]} ${tier} (${group.length})**`);
-    for (const c of group.slice(0, 10)) {
-      lines.push(`• ${c.character_name} — *${c.source_title}*`);
-    }
-    if (group.length > 10) lines.push(`• …and ${group.length - 10} more`);
-  }
+  const lines = rows.map((c, i) => `**${i + 1}.** ${tierEmoji[c.tier]} ${c.character_name} — *${c.source_title}*`);
 
   const embed = new EmbedBuilder()
     .setColor(0xff85c0)
-    .setTitle(`💍 ${target.username}'s Harem (${rows.length})`)
-    .setDescription(lines.join('\n'))
+    .setTitle(`💍 ${target.username}'s Harem (${rows.length}/${db.MAX_HAREM_SIZE})`)
+    .setDescription(
+      lines.join('\n') +
+        `\n\nUse \`x!view <number>\` to see a character's picture, or \`x!unmarry <number>\` to remove one.`,
+    )
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });
