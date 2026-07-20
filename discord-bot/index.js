@@ -5,6 +5,7 @@
  *
  * • Creates the Discord client with the minimum required intents
  * • Registers a prefix-based command router (prefix: x!)
+ * • Initializes the Postgres-backed harem/gacha game database
  * • Connects to Discord using the token stored in process.env
  * ─────────────────────────────────────────────────────────────────────────────
  */
@@ -14,6 +15,7 @@ const path = require('path');
 
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { prefix, token } = require('./config/config');
+const db = require('./utils/db');
 
 // ── Sanity-check the token ────────────────────────────────────────────────────
 if (!token) {
@@ -28,14 +30,16 @@ if (!token) {
 // GatewayIntentBits tells Discord which events we want to receive.
 // MessageContent is required to read the text of messages (privileged intent —
 // you must enable it in the Discord Developer Portal under Bot > Privileged Intents).
+// GuildMessageReactions is required for the x!waifu marry-claim reaction flow.
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds,          // Access guild (server) data
-    GatewayIntentBits.GuildMessages,   // Receive message events in guilds
-    GatewayIntentBits.MessageContent,  // Read message content (PRIVILEGED — enable in Dev Portal)
-    GatewayIntentBits.GuildMembers,    // Needed for member count / moderation targets
+    GatewayIntentBits.Guilds,             // Access guild (server) data
+    GatewayIntentBits.GuildMessages,      // Receive message events in guilds
+    GatewayIntentBits.MessageContent,     // Read message content (PRIVILEGED — enable in Dev Portal)
+    GatewayIntentBits.GuildMembers,       // Needed for member count / moderation targets
+    GatewayIntentBits.GuildMessageReactions, // Needed for the x!waifu 💍 claim reaction
   ],
-  partials: [Partials.Message, Partials.Channel],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
 // ── Auto-scan command modules ─────────────────────────────────────────────────
@@ -56,7 +60,7 @@ for (const file of fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'))) {
 }
 
 // ── Event: Bot is ready ───────────────────────────────────────────────────────
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`✅  Logged in as ${client.user.tag}`);
   console.log(`🔧  Prefix: ${prefix}`);
   console.log(`📦  Commands loaded: ${[...commands.keys()].join(', ')}`);
@@ -64,6 +68,13 @@ client.once('ready', () => {
 
   // Set the bot's activity status
   client.user.setActivity(`${prefix}help | ${commands.size} commands`, { type: 3 /* Watching */ });
+
+  // Initialize the harem/gacha game database (creates tables if missing)
+  try {
+    await db.init();
+  } catch (err) {
+    console.error('[ERROR] Database init failed — x!waifu/x!harem will not work:', err.message);
+  }
 });
 
 // ── Event: Message received ───────────────────────────────────────────────────
