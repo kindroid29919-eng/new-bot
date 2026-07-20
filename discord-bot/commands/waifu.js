@@ -1,10 +1,16 @@
+/**
+ * waifu.js — x!waifu
+ * Pull a random anime character. Costs 20 🌸 Petals per pull (no hourly limit).
+ * React 💍 within 60s to marry the character.
+ */
+
 const { EmbedBuilder } = require('discord.js');
 const { getRandomCharacter } = require('../utils/anilist.js');
 const db = require('../utils/db.js');
 
-const MARRY_EMOJI = '💍';
+const MARRY_EMOJI     = '💍';
 const CLAIM_WINDOW_MS = 60_000;
-const MAX_PULLS_PER_HOUR = 10;
+const PULL_COST       = 20;
 
 const tierColor = {
   Legendary: 0xffd700,
@@ -17,33 +23,62 @@ const tierColor = {
 async function execute(message) {
   const userId = message.author.id;
 
-  const pulls = await db.pullsInLastHour(userId);
-  if (pulls >= MAX_PULLS_PER_HOUR) {
-    const mins = await db.minutesUntilNextSlot(userId);
+  // ── Balance check ─────────────────────────────────────────────────────────
+  const balance = await db.getBalance(userId);
+  if (balance < PULL_COST) {
     return message.reply(
-      `💔 You've used all **${MAX_PULLS_PER_HOUR}** pulls this hour. ` +
-        `Try again in **${mins}m**.`,
+      `🌸 You need **${PULL_COST} Petals** to pull — you only have **${balance}**.\n` +
+      `Earn more with \`x!daily\`, \`x!coinflip\`, or \`x!duel\`!`,
     );
   }
 
-  const character = await getRandomCharacter();
-  if (!character) {
-    return message.reply("⚠️ Couldn't reach the character database right now — try again in a bit.");
+  // ── Harem full check ──────────────────────────────────────────────────────
+  const count = await db.countHarem(userId);
+  if (count >= db.MAX_HAREM_SIZE) {
+    return message.reply(
+      `💔 Your harem is full (${db.MAX_HAREM_SIZE}/${db.MAX_HAREM_SIZE})!\n` +
+      `Use \`x!unmarry <number>\` to release someone before pulling again.`,
+    );
   }
 
-  // Count the pull immediately (whether or not they end up claiming it) —
-  // that's what actually limits the 10/hour rate, matching a real gacha pull.
-  await db.logPull(userId);
+  // ── Deduct cost before pull (non-refundable, like a real gacha) ───────────
+  const ok = await db.deductBalance(userId, PULL_COST);
+  if (!ok) {
+    return message.reply(
+      `🌸 You need **${PULL_COST} Petals** to pull — you only have **${balance}**.\n` +
+      `Earn more with \`x!daily\`, \`x!coinflip\`, or \`x!duel\`!`,
+    );
+  }
+
+  // ── Pity check ────────────────────────────────────────────────────────────
+  const pity = await db.getPity(userId);
+  const forcePity = pity >= 50;
+
+  const character = await getRandomCharacter({ requireEpicOrBetter: forcePity });
+  if (!character) {
+    // Refund on API failure
+    await db.addBalance(userId, PULL_COST);
+    return message.reply("⚠️ Couldn't reach the character database right now — try again in a bit. Your Petals were refunded.");
+  }
+
+  // ── Log pull + update pity ────────────────────────────────────────────────
+  const isEpicOrBetter = ['Epic', 'Legendary'].includes(character.tier.name);
+  await Promise.all([
+    db.logPull(userId),
+    db.bumpPity(userId, isEpicOrBetter),
+  ]);
+
+  const newBalance = await db.getBalance(userId);
 
   const embed = new EmbedBuilder()
     .setColor(tierColor[character.tier.name] || 0xff85c0)
     .setTitle(`${character.tier.emoji} ${character.name}`)
     .setDescription(
       `**From:** ${character.source}\n` +
-        `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
-        `React with ${MARRY_EMOJI} within **60 seconds** to marry them!`,
+      `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
+      `React with ${MARRY_EMOJI} within **60 seconds** to marry them!`,
     )
-    .setFooter({ text: `${pulls + 1}/${MAX_PULLS_PER_HOUR} pulls used this hour` })
+    .setFooter({ text: `🌸 ${newBalance} Petals remaining • Cost: ${PULL_COST} Petals per pull` })
     .setTimestamp();
 
   if (character.image) embed.setImage(character.image);
@@ -64,8 +99,8 @@ async function execute(message) {
     const marriedEmbed = EmbedBuilder.from(embed)
       .setDescription(
         `**From:** ${character.source}\n` +
-          `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
-          `💍 Married to <@${userId}>! Check \`x!harem\` to see your collection.`,
+        `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
+        `💍 Married to <@${userId}>! Check \`x!harem\` to see your collection.`,
       )
       .setColor(0x2ed573);
 
@@ -77,13 +112,12 @@ async function execute(message) {
       const escapedEmbed = EmbedBuilder.from(embed)
         .setDescription(
           `**From:** ${character.source}\n` +
-            `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
-            `💨 ${character.name} got away — too slow!`,
+          `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
+          `💨 ${character.name} got away — too slow!`,
         )
         .setColor(0x636e72);
       await sent.edit({ embeds: [escapedEmbed] }).catch(() => {});
     }
-    // Clean up the reaction prompt either way
     await sent.reactions.removeAll().catch(() => {});
   });
 }
@@ -92,7 +126,7 @@ module.exports = {
   execute,
   name: 'waifu',
   aliases: [],
-  description: 'Pull a random anime/manga character — react 💍 within 60s to marry them!',
+  description: `Pull a random anime character for ${PULL_COST} 🌸 Petals — react 💍 within 60s to marry them!`,
   usage: 'waifu',
   category: 'Game',
 };

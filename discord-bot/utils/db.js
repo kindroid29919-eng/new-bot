@@ -51,13 +51,37 @@ async function init() {
     );
   `);
 
+  // ── Petals (currency) ─────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS currency (
+      user_id    TEXT PRIMARY KEY,
+      balance    INTEGER NOT NULL DEFAULT 0,
+      streak     INTEGER NOT NULL DEFAULT 0,
+      last_daily TIMESTAMPTZ
+    );
+  `);
+
+  // ── Duel history ──────────────────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS duel_log (
+      id           SERIAL PRIMARY KEY,
+      winner_id    TEXT NOT NULL,
+      loser_id     TEXT NOT NULL,
+      winner_char  TEXT NOT NULL,
+      loser_char   TEXT NOT NULL,
+      turns_taken  INTEGER NOT NULL,
+      payout       INTEGER NOT NULL DEFAULT 0,
+      ended_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_harem_user ON harem(user_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_pulls_user_time ON waifu_pulls(user_id, pulled_at);`);
 
-  console.log('[db] schema ready (harem, waifu_pulls, waifu_pity)');
+  console.log('[db] schema ready (harem, waifu_pulls, waifu_pity, currency, duel_log)');
 }
 
-// ── Rate limiting: max 10 pulls per rolling hour ────────────────────────────
+// ── Rate limiting (kept for backwards compat, no longer used for waifu) ────
 async function pullsInLastHour(userId) {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS count FROM waifu_pulls
@@ -102,7 +126,7 @@ async function bumpPity(userId, gotEpicOrBetter) {
   return next;
 }
 
-// ── Harem ────────────────────────────────────────────────────────────────
+// ── Harem ─────────────────────────────────────────────────────────────────
 async function countHarem(userId) {
   const { rows } = await pool.query(
     'SELECT COUNT(*)::int AS count FROM harem WHERE user_id = $1',
@@ -131,7 +155,7 @@ async function addToHarem(userId, character) {
 // x!harem line up with what x!view / x!unmarry expect.
 async function getHarem(userId) {
   const { rows } = await pool.query(
-    `SELECT id, character_name, source_title, image_url, tier, favourites, married_at
+    `SELECT id, character_id, character_name, source_title, image_url, tier, favourites, married_at
      FROM harem WHERE user_id = $1
      ORDER BY
        CASE tier
@@ -155,17 +179,160 @@ async function removeFromHarem(userId, haremRowId) {
   return rowCount > 0;
 }
 
+// Transfer a harem character from one user to another (for trades)
+async function transferHaremEntry(haremRowId, fromUserId, toUserId) {
+  const { rowCount } = await pool.query(
+    `UPDATE harem SET user_id = $1 WHERE id = $2 AND user_id = $3`,
+    [toUserId, haremRowId, fromUserId],
+  );
+  return rowCount > 0;
+}
+
+// ── Petals (currency) ──────────────────────────────────────────────────────
+async function getBalance(userId) {
+  const { rows } = await pool.query(
+    `SELECT balance FROM currency WHERE user_id = $1`,
+    [userId],
+  );
+  return rows[0]?.balance ?? 0;
+}
+
+// Add petals to a user's balance (creates row if missing). Returns new balance.
+async function addBalance(userId, amount) {
+  const { rows } = await pool.query(
+    `INSERT INTO currency (user_id, balance) VALUES ($1, $2)
+     ON CONFLICT (user_id) DO UPDATE
+       SET balance = currency.balance + $2
+     RETURNING balance`,
+    [userId, amount],
+  );
+  return rows[0].balance;
+}
+
+// Deduct petals atomically. Returns false if insufficient balance.
+async function deductBalance(userId, amount) {
+  const { rows } = await pool.query(
+    `UPDATE currency SET balance = balance - $2
+     WHERE user_id = $1 AND balance >= $2
+     RETURNING balance`,
+    [userId, amount],
+  );
+  return rows.length > 0;
+}
+
+// Transfer petals from one user to another atomically. Returns false on failure.
+async function transferBalance(fromUserId, toUserId, amount) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE currency SET balance = balance - $2
+       WHERE user_id = $1 AND balance >= $2
+       RETURNING balance`,
+      [fromUserId, amount],
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+    await client.query(
+      `INSERT INTO currency (user_id, balance) VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET balance = currency.balance + $2`,
+      [toUserId, amount],
+    );
+    await client.query('COMMIT');
+    return true;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// ── Daily claim ────────────────────────────────────────────────────────────
+const DAILY_BASE = 100;
+const DAILY_STREAK_BONUS = 10;
+const STREAK_RESET_HOURS = 48; // miss 2 days → streak resets
+
+async function getDailyInfo(userId) {
+  const { rows } = await pool.query(
+    `SELECT balance, streak, last_daily FROM currency WHERE user_id = $1`,
+    [userId],
+  );
+  return rows[0] ?? { balance: 0, streak: 0, last_daily: null };
+}
+
+// Returns { petals, newStreak, alreadyClaimed, hoursLeft }
+async function claimDaily(userId) {
+  const info = await getDailyInfo(userId);
+  const now = Date.now();
+
+  if (info.last_daily) {
+    const lastMs = new Date(info.last_daily).getTime();
+    const hoursSince = (now - lastMs) / 3_600_000;
+
+    if (hoursSince < 24) {
+      const hoursLeft = Math.ceil(24 - hoursSince);
+      return { alreadyClaimed: true, hoursLeft };
+    }
+
+    // Missed more than 48h → streak resets to 1
+    var newStreak = hoursSince > STREAK_RESET_HOURS ? 1 : info.streak + 1;
+  } else {
+    var newStreak = 1;
+  }
+
+  const petals = DAILY_BASE + (newStreak - 1) * DAILY_STREAK_BONUS;
+
+  await pool.query(
+    `INSERT INTO currency (user_id, balance, streak, last_daily)
+       VALUES ($1, $2, $3, now())
+     ON CONFLICT (user_id) DO UPDATE
+       SET balance    = currency.balance + $2,
+           streak     = $3,
+           last_daily = now()`,
+    [userId, petals, newStreak],
+  );
+
+  return { alreadyClaimed: false, petals, newStreak };
+}
+
+// ── Duel log ───────────────────────────────────────────────────────────────
+async function logDuel(winnerId, loserId, winnerChar, loserChar, turns, payout) {
+  await pool.query(
+    `INSERT INTO duel_log (winner_id, loser_id, winner_char, loser_char, turns_taken, payout)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [winnerId, loserId, winnerChar, loserChar, turns, payout],
+  );
+}
+
 module.exports = {
   pool,
   init,
   MAX_HAREM_SIZE,
+  // pulls
   pullsInLastHour,
   logPull,
   minutesUntilNextSlot,
+  // pity
   getPity,
   bumpPity,
+  // harem
   countHarem,
   addToHarem,
   getHarem,
   removeFromHarem,
+  transferHaremEntry,
+  // currency
+  getBalance,
+  addBalance,
+  deductBalance,
+  transferBalance,
+  getDailyInfo,
+  claimDaily,
+  DAILY_BASE,
+  DAILY_STREAK_BONUS,
+  // duel
+  logDuel,
 };

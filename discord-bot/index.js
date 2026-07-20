@@ -5,7 +5,8 @@
  *
  * • Creates the Discord client with the minimum required intents
  * • Registers a prefix-based command router (prefix: x!)
- * • Initializes the Postgres-backed harem/gacha game database
+ * • Handles button/select-menu interactions for duels and trades
+ * • Initializes the Postgres-backed database
  * • Connects to Discord using the token stored in process.env
  * ─────────────────────────────────────────────────────────────────────────────
  */
@@ -15,7 +16,8 @@ const path = require('path');
 
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { prefix, token } = require('./config/config');
-const db = require('./utils/db');
+const db          = require('./utils/db');
+const duelEngine  = require('./utils/duelEngine');
 
 // ── Sanity-check the token ────────────────────────────────────────────────────
 if (!token) {
@@ -27,27 +29,21 @@ if (!token) {
 }
 
 // ── Create the Discord client ─────────────────────────────────────────────────
-// GatewayIntentBits tells Discord which events we want to receive.
-// MessageContent is required to read the text of messages (privileged intent —
-// you must enable it in the Discord Developer Portal under Bot > Privileged Intents).
-// GuildMessageReactions is required for the x!waifu marry-claim reaction flow.
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds,             // Access guild (server) data
-    GatewayIntentBits.GuildMessages,      // Receive message events in guilds
-    GatewayIntentBits.MessageContent,     // Read message content (PRIVILEGED — enable in Dev Portal)
-    GatewayIntentBits.GuildMembers,       // Needed for member count / moderation targets
-    GatewayIntentBits.GuildMessageReactions, // Needed for the x!waifu 💍 claim reaction
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,       // Privileged — enable in Dev Portal
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.DirectMessages,       // Needed to send DM-based duel prompts
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
 // ── Auto-scan command modules ─────────────────────────────────────────────────
-// Every .js file dropped into commands/ is loaded automatically.
-// A command file must export { execute }.
-// Optional exports:  aliases (string[]), description, usage, category.
-const commands = new Map();   // commandName  → module
-const aliasMap = new Map();   // aliasName    → module
+const commands = new Map();
+const aliasMap  = new Map();
 
 const commandsDir = path.join(__dirname, 'commands');
 for (const file of fs.readdirSync(commandsDir).filter(f => f.endsWith('.js'))) {
@@ -66,54 +62,69 @@ client.once('ready', async () => {
   console.log(`📦  Commands loaded: ${[...commands.keys()].join(', ')}`);
   if (aliasMap.size) console.log(`🔀  Aliases loaded: ${[...aliasMap.keys()].join(', ')}`);
 
-  // Set the bot's activity status
   client.user.setActivity(`${prefix}help | ${commands.size} commands`, { type: 3 /* Watching */ });
 
-  // Initialize the harem/gacha game database (creates tables if missing)
+  // Give the duel engine a reference to the client (needed for DMs, channel posts)
+  duelEngine.init(client);
+
+  // Initialize the database (creates tables if missing)
   try {
     await db.init();
   } catch (err) {
-    console.error('[ERROR] Database init failed — x!waifu/x!harem will not work:', err.message);
+    console.error('[ERROR] Database init failed:', err.message);
   }
 });
 
 // ── Event: Message received ───────────────────────────────────────────────────
 client.on('messageCreate', async (message) => {
-  // Ignore messages from bots (prevents loops) and messages without the prefix
   if (message.author.bot) return;
   if (!message.content.toLowerCase().startsWith(prefix.toLowerCase())) return;
 
-  // Parse the command name and arguments
-  // e.g. "x!Expose Ahad" → commandName = "expose", args = ["Ahad"]
   const withoutPrefix = message.content.slice(prefix.length).trim();
   const [rawCommandName, ...args] = withoutPrefix.split(/\s+/);
-  const commandName = rawCommandName.toLowerCase(); // case-insensitive matching
+  const commandName = rawCommandName.toLowerCase();
 
-  // Look up the command handler (by name or alias)
   const command = commands.get(commandName) || aliasMap.get(commandName);
+  if (!command) return;
 
-  if (!command) {
-    // Unknown command — silently ignore (no spam for typos)
-    return;
-  }
-
-  // Execute the command, passing the commands map so help can read it dynamically
   try {
     await command.execute(message, args, commands);
   } catch (error) {
     console.error(`[ERROR] Command "${commandName}" threw an error:`, error);
-
-    // Attempt to notify the user something went wrong
     try {
       await message.reply('⚠️ Something went wrong while running that command.');
-    } catch {
-      // If even the error message fails, just log it
+    } catch {}
+  }
+});
+
+// ── Event: Button / Select-menu interactions ──────────────────────────────────
+// Routes duel and trade component interactions to the appropriate handlers.
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
+
+  const { customId } = interaction;
+
+  try {
+    if (customId.startsWith('duel_')) {
+      await duelEngine.handleInteraction(interaction);
+    } else if (customId.startsWith('trade_')) {
+      // Trade handler is exported from the trade command module
+      const tradeMod = commands.get('trade');
+      if (tradeMod?.handleInteraction) {
+        await tradeMod.handleInteraction(interaction);
+      }
     }
+  } catch (err) {
+    console.error('[ERROR] Interaction handler threw:', err);
+    try {
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '⚠️ Something went wrong processing that action.', ephemeral: true });
+      }
+    } catch {}
   }
 });
 
 // ── Global error handling ─────────────────────────────────────────────────────
-// Prevents the bot from crashing on unhandled promise rejections
 process.on('unhandledRejection', (reason) => {
   console.error('[UNHANDLED REJECTION]', reason);
 });
@@ -130,7 +141,6 @@ client.login(token).catch((err) => {
     console.error('  3. Scroll to "Privileged Gateway Intents"');
     console.error('  4. Toggle ON "Message Content Intent"');
     console.error('  5. Click Save Changes');
-    console.error('  6. The workflow will restart automatically.');
   } else {
     console.error('[ERROR] Failed to log in:', err.message);
     console.error('        Make sure your DISCORD_TOKEN is correct and the bot is not banned.');
