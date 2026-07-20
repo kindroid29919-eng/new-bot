@@ -51,7 +51,70 @@ function tierFor(favourites) {
 const RARE_OR_BETTER  = new Set(['Rare', 'Epic', 'Legendary']);
 const EPIC_OR_BETTER  = new Set(['Epic', 'Legendary']);
 
+// ---------------------------------------------------------------------------
+// Local cache
+// ---------------------------------------------------------------------------
+// Two layers:
+//   1. pageCache      — raw AniList page responses, keyed by page number.
+//                        Since restrictive tiers (e.g. legendary) only ever
+//                        draw from a handful of pages, this alone removes
+//                        the vast majority of repeat network calls.
+//   2. characterCache — individual parsed characters keyed by id, so any
+//                        re-roll that lands on a previously-seen character
+//                        (by id) is served with zero network I/O and zero
+//                        re-parsing, regardless of which page it came from.
+//
+// Both are plain in-memory Maps here. Swap the get/set/has bodies below for
+// calls into your own DB (Redis, Postgres, etc.) if you need persistence
+// across process restarts — the rest of the module doesn't need to change.
+
+const PAGE_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h — favourites drift slowly
+
+const pageCache = new Map();      // page -> { characters: raw[], fetchedAt }
+const characterCache = new Map(); // id   -> parsed character object
+
+function getCachedPage(page) {
+  const entry = pageCache.get(page);
+  if (!entry) return null;
+  if (Date.now() - entry.fetchedAt > PAGE_CACHE_TTL_MS) {
+    pageCache.delete(page);
+    return null;
+  }
+  return entry.characters;
+}
+
+function setCachedPage(page, characters) {
+  pageCache.set(page, { characters, fetchedAt: Date.now() });
+}
+
+function cacheCharacter(character) {
+  characterCache.set(character.id, character);
+}
+
+/**
+ * Look up a previously-pulled character by id with zero AniList requests.
+ * Returns null if it hasn't been seen (i.e. cache miss) — caller can decide
+ * whether to fall back to a fresh pull.
+ */
+function getCharacterFromCache(id) {
+  return characterCache.get(id) || null;
+}
+
+function cacheStats() {
+  return { pages: pageCache.size, characters: characterCache.size };
+}
+
+function clearCache() {
+  pageCache.clear();
+  characterCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+
 async function fetchPage(page) {
+  const cached = getCachedPage(page);
+  if (cached) return cached;
+
   const controller = new AbortController();
   const timeout    = setTimeout(() => controller.abort(), 8000);
 
@@ -72,7 +135,9 @@ async function fetchPage(page) {
       return [];
     }
     const data = await res.json();
-    return data?.data?.Page?.characters ?? [];
+    const characters = data?.data?.Page?.characters ?? [];
+    if (characters.length) setCachedPage(page, characters);
+    return characters;
   } catch (err) {
     clearTimeout(timeout);
     console.error('[anilist] fetch failed:', err.name, err.message);
@@ -129,7 +194,8 @@ async function getRandomCharacter(opts = {}, maxAttempts = 15) {
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const page = Math.floor(Math.random() * maxPage) + 1;
-    const raw  = await fetchPage(page);
+    const raw  = await fetchPage(page); // served from pageCache when available
+
     if (!raw.length) continue;
 
     const candidates = raw
@@ -139,11 +205,20 @@ async function getRandomCharacter(opts = {}, maxAttempts = 15) {
       .filter(tierFilter);
 
     if (candidates.length) {
-      return candidates[Math.floor(Math.random() * candidates.length)];
+      const picked = candidates[Math.floor(Math.random() * candidates.length)];
+      cacheCharacter(picked); // store so future re-rolls of this id are free
+      return picked;
     }
   }
 
   return null; // gave up — caller should handle gracefully
 }
 
-module.exports = { getRandomCharacter, tierFor };
+module.exports = {
+  getRandomCharacter,
+  tierFor,
+  // cache utilities
+  getCharacterFromCache,
+  cacheStats,
+  clearCache,
+};
