@@ -46,10 +46,15 @@ async function init() {
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS waifu_pity (
-      user_id           TEXT PRIMARY KEY,
-      pulls_since_epic   INTEGER NOT NULL DEFAULT 0
+      user_id              TEXT PRIMARY KEY,
+      pulls_since_epic     INTEGER NOT NULL DEFAULT 0,
+      pulls_since_rare     INTEGER NOT NULL DEFAULT 0,
+      pulls_since_legendary INTEGER NOT NULL DEFAULT 0
     );
   `);
+  // Migrate: add new columns to existing tables if they don't exist yet
+  await pool.query(`ALTER TABLE waifu_pity ADD COLUMN IF NOT EXISTS pulls_since_rare      INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE waifu_pity ADD COLUMN IF NOT EXISTS pulls_since_legendary INTEGER NOT NULL DEFAULT 0`);
 
   // ── Petals (currency) ─────────────────────────────────────────────────────
   await pool.query(`
@@ -117,23 +122,85 @@ async function minutesUntilNextSlot(userId) {
   return Math.max(1, Math.ceil(msRemaining / 60000));
 }
 
-// ── Pity system: hard pity at 50 pulls since last Epic+ ────────────────────
-async function getPity(userId) {
+// ── Pity system (three-tier: Rare / Epic / Legendary) ─────────────────────
+//
+//   pulls_since_rare      → resets on Rare+.   Hard pity at 30: guarantee Rare+.
+//   pulls_since_epic      → resets on Epic+.   Hard pity at 50: 90% Epic / 10% Legendary.
+//   pulls_since_legendary → resets on Legendary. Hard pity at 100: guarantee Legendary.
+//
+// All three are tracked independently. A Legendary pull resets all counters.
+
+const ZERO_PITY = { pulls_since_rare: 0, pulls_since_epic: 0, pulls_since_legendary: 0 };
+
+/** Return the current pity state for a user (all three counters). */
+async function getPityState(userId) {
   const { rows } = await pool.query(
-    'SELECT pulls_since_epic FROM waifu_pity WHERE user_id = $1',
+    `SELECT pulls_since_rare, pulls_since_epic, pulls_since_legendary
+     FROM waifu_pity WHERE user_id = $1`,
     [userId],
   );
-  return rows[0]?.pulls_since_epic ?? 0;
+  return rows[0] ?? { ...ZERO_PITY };
 }
 
-async function bumpPity(userId, gotEpicOrBetter) {
-  const next = gotEpicOrBetter ? 0 : (await getPity(userId)) + 1;
+/** Persist the pity state after one or more pulls. */
+async function setPityState(userId, { pulls_since_rare, pulls_since_epic, pulls_since_legendary }) {
   await pool.query(
-    `INSERT INTO waifu_pity (user_id, pulls_since_epic) VALUES ($1, $2)
-     ON CONFLICT (user_id) DO UPDATE SET pulls_since_epic = $2`,
-    [userId, next],
+    `INSERT INTO waifu_pity (user_id, pulls_since_rare, pulls_since_epic, pulls_since_legendary)
+       VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id) DO UPDATE SET
+       pulls_since_rare      = $2,
+       pulls_since_epic      = $3,
+       pulls_since_legendary = $4`,
+    [userId, pulls_since_rare, pulls_since_epic, pulls_since_legendary],
   );
-  return next;
+}
+
+/**
+ * Compute the NEXT pity state given what tier was pulled.
+ * Pure function — safe to call in a loop for 10-pulls without hitting the DB.
+ *
+ * @param {{ pulls_since_rare, pulls_since_epic, pulls_since_legendary }} state
+ * @param {string} tier  — 'Common' | 'Uncommon' | 'Rare' | 'Epic' | 'Legendary'
+ * @returns {{ pulls_since_rare, pulls_since_epic, pulls_since_legendary }}
+ */
+function advancePityState(state, tier) {
+  const isLeg      = tier === 'Legendary';
+  const isEpicPlus = isLeg  || tier === 'Epic';
+  const isRarePlus = isEpicPlus || tier === 'Rare';
+  return {
+    pulls_since_rare:      isRarePlus ? 0 : state.pulls_since_rare + 1,
+    pulls_since_epic:      isEpicPlus ? 0 : state.pulls_since_epic + 1,
+    pulls_since_legendary: isLeg      ? 0 : state.pulls_since_legendary + 1,
+  };
+}
+
+/**
+ * Decide which tier guarantee (if any) applies for the next pull.
+ *
+ * @param {{ pulls_since_rare, pulls_since_epic, pulls_since_legendary }} state
+ * @returns {{ requireLegendary?, requireEpicOrBetter?, requireRareOrBetter? }}
+ */
+function pityOpts(state) {
+  if (state.pulls_since_legendary >= 100) return { requireLegendary: true };
+  if (state.pulls_since_epic      >= 50) {
+    // 90% Epic, 10% Legendary
+    return Math.random() < 0.1
+      ? { requireLegendary: true }
+      : { requireEpicOrBetter: true };
+  }
+  if (state.pulls_since_rare      >= 30) return { requireRareOrBetter: true };
+  return {};
+}
+
+// ── Back-compat shims (kept so other files don't break during the transition) ─
+async function getPity(userId) {
+  const s = await getPityState(userId);
+  return s.pulls_since_epic;
+}
+async function bumpPity(userId, gotEpicOrBetter) {
+  const s = await getPityState(userId);
+  const tier = gotEpicOrBetter ? 'Epic' : 'Common';
+  await setPityState(userId, advancePityState(s, tier));
 }
 
 // ── Harem ─────────────────────────────────────────────────────────────────
@@ -343,7 +410,12 @@ module.exports = {
   pullsInLastHour,
   logPull,
   minutesUntilNextSlot,
-  // pity
+  // pity (new three-tier system)
+  getPityState,
+  setPityState,
+  advancePityState,
+  pityOpts,
+  // pity (back-compat shims)
   getPity,
   bumpPity,
   // harem
