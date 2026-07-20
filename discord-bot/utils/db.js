@@ -14,13 +14,12 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Railway's internal Postgres connections don't need SSL; if you ever
-  // point this at an external Postgres host that requires it, set
-  // PGSSLMODE=require as an env var instead of hardcoding it here.
   ssl: process.env.DATABASE_URL?.includes('railway.internal')
     ? false
     : { rejectUnauthorized: false },
 });
+
+const MAX_HAREM_SIZE = 8;
 
 async function init() {
   await pool.query(`
@@ -46,13 +45,16 @@ async function init() {
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_harem_user ON harem(user_id);
-  `);
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_pulls_user_time ON waifu_pulls(user_id, pulled_at);
+    CREATE TABLE IF NOT EXISTS waifu_pity (
+      user_id           TEXT PRIMARY KEY,
+      pulls_since_epic   INTEGER NOT NULL DEFAULT 0
+    );
   `);
 
-  console.log('[db] schema ready (harem, waifu_pulls)');
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_harem_user ON harem(user_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_pulls_user_time ON waifu_pulls(user_id, pulled_at);`);
+
+  console.log('[db] schema ready (harem, waifu_pulls, waifu_pity)');
 }
 
 // ── Rate limiting: max 10 pulls per rolling hour ────────────────────────────
@@ -69,8 +71,6 @@ async function logPull(userId) {
   await pool.query('INSERT INTO waifu_pulls (user_id) VALUES ($1)', [userId]);
 }
 
-// Minutes until the user's oldest pull in the current window falls off,
-// i.e. when they'll regain a pull slot. Used for the "try again in Xm" message.
 async function minutesUntilNextSlot(userId) {
   const { rows } = await pool.query(
     `SELECT pulled_at FROM waifu_pulls
@@ -83,7 +83,34 @@ async function minutesUntilNextSlot(userId) {
   return Math.max(1, Math.ceil(msRemaining / 60000));
 }
 
+// ── Pity system: hard pity at 50 pulls since last Epic+ ────────────────────
+async function getPity(userId) {
+  const { rows } = await pool.query(
+    'SELECT pulls_since_epic FROM waifu_pity WHERE user_id = $1',
+    [userId],
+  );
+  return rows[0]?.pulls_since_epic ?? 0;
+}
+
+async function bumpPity(userId, gotEpicOrBetter) {
+  const next = gotEpicOrBetter ? 0 : (await getPity(userId)) + 1;
+  await pool.query(
+    `INSERT INTO waifu_pity (user_id, pulls_since_epic) VALUES ($1, $2)
+     ON CONFLICT (user_id) DO UPDATE SET pulls_since_epic = $2`,
+    [userId, next],
+  );
+  return next;
+}
+
 // ── Harem ────────────────────────────────────────────────────────────────
+async function countHarem(userId) {
+  const { rows } = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM harem WHERE user_id = $1',
+    [userId],
+  );
+  return rows[0].count;
+}
+
 async function addToHarem(userId, character) {
   await pool.query(
     `INSERT INTO harem (user_id, character_id, character_name, source_title, image_url, tier, favourites)
@@ -100,9 +127,11 @@ async function addToHarem(userId, character) {
   );
 }
 
+// Ordered consistently (tier, then favourites) so the numbers shown in
+// x!harem line up with what x!view / x!unmarry expect.
 async function getHarem(userId) {
   const { rows } = await pool.query(
-    `SELECT character_name, source_title, tier, favourites, married_at
+    `SELECT id, character_name, source_title, image_url, tier, favourites, married_at
      FROM harem WHERE user_id = $1
      ORDER BY
        CASE tier
@@ -118,12 +147,25 @@ async function getHarem(userId) {
   return rows;
 }
 
+async function removeFromHarem(userId, haremRowId) {
+  const { rowCount } = await pool.query(
+    'DELETE FROM harem WHERE user_id = $1 AND id = $2',
+    [userId, haremRowId],
+  );
+  return rowCount > 0;
+}
+
 module.exports = {
   pool,
   init,
+  MAX_HAREM_SIZE,
   pullsInLastHour,
   logPull,
   minutesUntilNextSlot,
+  getPity,
+  bumpPity,
+  countHarem,
   addToHarem,
   getHarem,
+  removeFromHarem,
 };

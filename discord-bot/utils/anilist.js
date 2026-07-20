@@ -1,22 +1,16 @@
 // AniList GraphQL client — pulls real, named anime/manga characters with
-// official art and a genuine popularity signal (favourites count), instead
-// of the anonymous fanart that art-aggregator APIs (nekos.best, waifu.pics
-// etc.) return. No API key required.
-//
-// Docs: https://docs.anilist.co/
+// official art and a genuine popularity signal (favourites count).
+// No API key required. Docs: https://docs.anilist.co/
 
 const ANILIST_URL = 'https://graphql.anilist.co';
-
-// We only need this for identifying the app in error logs — AniList doesn't
-// require it, but it's good practice and costs nothing.
 const USER_AGENT = 'Expose-Bot (ahadsg26@gmail.com)';
 
-// Pool size: how many of the top-favourited characters we draw from.
-// Keeps pulls to characters people actually recognize, while still being
-// a big enough pool to span all five rarity tiers.
 const POOL_SIZE = 4000;
 const PER_PAGE = 25;
 const MAX_PAGE = Math.ceil(POOL_SIZE / PER_PAGE);
+
+// Filters out characters too obscure to feel like a "real" pull.
+const MIN_FAVOURITES = 20;
 
 const QUERY = `
 query ($page: Int, $perPage: Int) {
@@ -26,6 +20,7 @@ query ($page: Int, $perPage: Int) {
       name { full native }
       image { large }
       favourites
+      gender
       media(perPage: 1, sort: POPULARITY_DESC) {
         nodes { title { romaji english } type }
       }
@@ -41,15 +36,9 @@ function tierFor(favourites) {
   return { name: 'Common', emoji: '⚪' };
 }
 
-/**
- * Fetches one random character from the top-POOL_SIZE most-favourited
- * AniList characters.
- * @returns {Promise<{id:number,name:string,image:string,favourites:number,
- *   source:string,mediaType:string,tier:{name:string,emoji:string}}|null>}
- */
-async function getRandomCharacter() {
-  const page = Math.floor(Math.random() * MAX_PAGE) + 1;
+const EPIC_OR_BETTER = new Set(['Epic', 'Legendary']);
 
+async function fetchPage(page) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
 
@@ -65,36 +54,62 @@ async function getRandomCharacter() {
       body: JSON.stringify({ query: QUERY, variables: { page, perPage: PER_PAGE } }),
     });
     clearTimeout(timeout);
-
     if (!res.ok) {
-      console.error(`[anilist] HTTP ${res.status} fetching character page ${page}`);
-      return null;
+      console.error(`[anilist] HTTP ${res.status} fetching page ${page}`);
+      return [];
     }
-
     const data = await res.json();
-    const list = data?.data?.Page?.characters ?? [];
-    if (!list.length) {
-      console.error('[anilist] empty character list', JSON.stringify(data));
-      return null;
-    }
-
-    const c = list[Math.floor(Math.random() * list.length)];
-    const media = c.media?.nodes?.[0];
-
-    return {
-      id: c.id,
-      name: c.name?.full || c.name?.native || 'Unknown',
-      image: c.image?.large,
-      favourites: c.favourites ?? 0,
-      source: media?.title?.english || media?.title?.romaji || 'Unknown',
-      mediaType: media?.type || 'ANIME',
-      tier: tierFor(c.favourites ?? 0),
-    };
+    return data?.data?.Page?.characters ?? [];
   } catch (err) {
     clearTimeout(timeout);
     console.error('[anilist] fetch failed:', err.name, err.message);
-    return null;
+    return [];
   }
+}
+
+function toCharacter(c) {
+  const media = c.media?.nodes?.[0];
+  return {
+    id: c.id,
+    name: c.name?.full || c.name?.native || 'Unknown',
+    image: c.image?.large,
+    favourites: c.favourites ?? 0,
+    source: media?.title?.english || media?.title?.romaji || 'Unknown',
+    mediaType: media?.type || 'ANIME',
+    tier: tierFor(c.favourites ?? 0),
+  };
+}
+
+/**
+ * Pulls a random character matching filters.
+ * @param {{ requireEpicOrBetter?: boolean }} opts
+ * @param {number} maxAttempts
+ */
+async function getRandomCharacter(opts = {}, maxAttempts = 15) {
+  const { requireEpicOrBetter = false } = opts;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // Pity pulls search a smaller, higher-favourites page range so we don't
+    // waste attempts scanning pages full of Common/Uncommon characters.
+    const page = requireEpicOrBetter
+      ? Math.floor(Math.random() * Math.ceil(600 / PER_PAGE)) + 1 // top ~600 by favourites
+      : Math.floor(Math.random() * MAX_PAGE) + 1;
+
+    const raw = await fetchPage(page);
+    if (!raw.length) continue;
+
+    const candidates = raw
+      .filter(c => c.gender === 'Female')
+      .filter(c => (c.favourites ?? 0) >= MIN_FAVOURITES)
+      .map(toCharacter)
+      .filter(c => !requireEpicOrBetter || EPIC_OR_BETTER.has(c.tier.name));
+
+    if (candidates.length) {
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+  }
+
+  return null; // gave up after maxAttempts — caller should handle gracefully
 }
 
 module.exports = { getRandomCharacter, tierFor };
