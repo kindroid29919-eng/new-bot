@@ -75,10 +75,20 @@ async function init() {
     );
   `);
 
+  // ── Shop purchases (one-per-user per item) ────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shop_purchases (
+      user_id      TEXT NOT NULL,
+      shop_item_id INTEGER NOT NULL,
+      purchased_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, shop_item_id)
+    );
+  `);
+
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_harem_user ON harem(user_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_pulls_user_time ON waifu_pulls(user_id, pulled_at);`);
 
-  console.log('[db] schema ready (harem, waifu_pulls, waifu_pity, currency, duel_log)');
+  console.log('[db] schema ready (harem, waifu_pulls, waifu_pity, currency, duel_log, shop_purchases)');
 }
 
 // ── Rate limiting (kept for backwards compat, no longer used for waifu) ────
@@ -298,6 +308,24 @@ async function claimDaily(userId) {
   return { alreadyClaimed: false, petals, newStreak };
 }
 
+// ── Shop ───────────────────────────────────────────────────────────────────
+/** Returns true if the user has already purchased this shop item. */
+async function hasShopItem(userId, shopItemId) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM shop_purchases WHERE user_id = $1 AND shop_item_id = $2`,
+    [userId, shopItemId],
+  );
+  return rows.length > 0;
+}
+
+/** Record a shop purchase (call AFTER deducting balance). */
+async function recordShopPurchase(userId, shopItemId) {
+  await pool.query(
+    `INSERT INTO shop_purchases (user_id, shop_item_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [userId, shopItemId],
+  );
+}
+
 // ── Duel log ───────────────────────────────────────────────────────────────
 async function logDuel(winnerId, loserId, winnerChar, loserChar, turns, payout) {
   await pool.query(
@@ -335,4 +363,7 @@ module.exports = {
   DAILY_STREAK_BONUS,
   // duel
   logDuel,
+  // shop
+  hasShopItem,
+  recordShopPurchase,
 };

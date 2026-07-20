@@ -10,7 +10,7 @@
 const { EmbedBuilder } = require('discord.js');
 const db = require('../utils/db.js');
 
-const MAX_BET = 30;
+const MAX_BET = 60;
 
 async function execute(message, args) {
   const result = Math.random() < 0.5 ? 'heads' : 'tails';

@@ -16,8 +16,9 @@ const path = require('path');
 
 const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const { prefix, token } = require('./config/config');
-const db          = require('./utils/db');
-const duelEngine  = require('./utils/duelEngine');
+const db             = require('./utils/db');
+const duelEngine     = require('./utils/duelEngine');
+const warfareEngine  = require('./utils/warfareEngine');
 
 // ── Sanity-check the token ────────────────────────────────────────────────────
 if (!token) {
@@ -64,8 +65,9 @@ client.once('ready', async () => {
 
   client.user.setActivity(`${prefix}help | ${commands.size} commands`, { type: 3 /* Watching */ });
 
-  // Give the duel engine a reference to the client (needed for DMs, channel posts)
+  // Give battle engines a reference to the client (needed for DMs, channel posts)
   duelEngine.init(client);
+  warfareEngine.init(client);
 
   // Initialize the database (creates tables if missing)
   try {
@@ -107,6 +109,8 @@ client.on('interactionCreate', async (interaction) => {
   try {
     if (customId.startsWith('duel_')) {
       await duelEngine.handleInteraction(interaction);
+    } else if (customId.startsWith('war_')) {
+      await warfareEngine.handleInteraction(interaction);
     } else if (customId.startsWith('trade_')) {
       // Trade handler is exported from the trade command module
       const tradeMod = commands.get('trade');
