@@ -130,13 +130,42 @@ async function fetchPage(page) {
       body: JSON.stringify({ query: QUERY, variables: { page, perPage: PER_PAGE } }),
     });
     clearTimeout(timeout);
+
+    const retryAfter = res.headers.get('retry-after');
+    const rlRemaining = res.headers.get('x-ratelimit-remaining');
+    if (retryAfter || (rlRemaining !== null && Number(rlRemaining) <= 1)) {
+      console.warn(
+        `[anilist] rate-limit signal on page ${page}: status=${res.status} ` +
+        `retry-after=${retryAfter ?? 'n/a'} remaining=${rlRemaining ?? 'n/a'}`,
+      );
+    }
+
     if (!res.ok) {
-      console.error(`[anilist] HTTP ${res.status} fetching page ${page}`);
+      let body = '';
+      try { body = await res.text(); } catch { /* ignore */ }
+      console.error(`[anilist] HTTP ${res.status} fetching page ${page}: ${body.slice(0, 300)}`);
       return [];
     }
+
     const data = await res.json();
+
+    // AniList can return 200 OK with a GraphQL-level error payload (bad query,
+    // complexity limit, degraded rate-limiting, etc). Without this check these
+    // failures were silent: characters would just come back empty with no log.
+    if (data?.errors?.length) {
+      console.error(
+        `[anilist] GraphQL error(s) on page ${page}: ` +
+        data.errors.map(e => e.message).join(' | '),
+      );
+      return [];
+    }
+
     const characters = data?.data?.Page?.characters ?? [];
-    if (characters.length) setCachedPage(page, characters);
+    if (!characters.length) {
+      console.warn(`[anilist] page ${page} returned 0 characters (unexpected empty payload)`);
+    } else {
+      setCachedPage(page, characters);
+    }
     return characters;
   } catch (err) {
     clearTimeout(timeout);
@@ -176,40 +205,61 @@ async function getRandomCharacter(opts = {}, maxAttempts = 15) {
   } = opts;
 
   // Determine search scope and acceptance filter (most → least restrictive)
-  let maxPage, tierFilter;
+  // `pageStops` is an escalation ladder: try the narrow, fast page range
+  // first; if it comes up empty, widen the search before giving up. This
+  // matters most for hard-pity pulls (requireLegendary etc.) — without an
+  // escalation path, a user who exhausts the narrow range gets `null`,
+  // their pity counter never resets, and they get stuck retrying the same
+  // narrow (and apparently empty) range forever.
+  let pageStops, tierFilter;
 
   if (requireLegendary) {
-    maxPage    = PAGE_RANGE.legendary;
+    pageStops  = [PAGE_RANGE.legendary, PAGE_RANGE.epicOrBetter, PAGE_RANGE.rareOrBetter, PAGE_RANGE.all];
     tierFilter = c => c.tier.name === 'Legendary';
   } else if (requireEpicOrBetter) {
-    maxPage    = PAGE_RANGE.epicOrBetter;
+    pageStops  = [PAGE_RANGE.epicOrBetter, PAGE_RANGE.rareOrBetter, PAGE_RANGE.all];
     tierFilter = c => EPIC_OR_BETTER.has(c.tier.name);
   } else if (requireRareOrBetter) {
-    maxPage    = PAGE_RANGE.rareOrBetter;
+    pageStops  = [PAGE_RANGE.rareOrBetter, PAGE_RANGE.all];
     tierFilter = c => RARE_OR_BETTER.has(c.tier.name);
   } else {
-    maxPage    = PAGE_RANGE.all;
+    pageStops  = [PAGE_RANGE.all];
     tierFilter = () => true;
   }
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const page = Math.floor(Math.random() * maxPage) + 1;
-    const raw  = await fetchPage(page); // served from pageCache when available
+  const triedPages = [];
+  const perStopAttempts = Math.max(1, Math.ceil(maxAttempts / pageStops.length));
 
-    if (!raw.length) continue;
+  for (const maxPage of pageStops) {
+    for (let attempt = 0; attempt < perStopAttempts; attempt++) {
+      const page = Math.floor(Math.random() * maxPage) + 1;
+      const raw  = await fetchPage(page); // served from pageCache when available
 
-    const candidates = raw
-      .filter(c => c.gender === 'Female')
-      .filter(c => (c.favourites ?? 0) >= MIN_FAVOURITES)
-      .map(toCharacter)
-      .filter(tierFilter);
+      if (!raw.length) {
+        triedPages.push(`${page}:empty`);
+        continue;
+      }
 
-    if (candidates.length) {
-      const picked = candidates[Math.floor(Math.random() * candidates.length)];
-      cacheCharacter(picked); // store so future re-rolls of this id are free
-      return picked;
+      const candidates = raw
+        .filter(c => c.gender === 'Female')
+        .filter(c => (c.favourites ?? 0) >= MIN_FAVOURITES)
+        .map(toCharacter)
+        .filter(tierFilter);
+
+      if (candidates.length) {
+        const picked = candidates[Math.floor(Math.random() * candidates.length)];
+        cacheCharacter(picked); // store so future re-rolls of this id are free
+        return picked;
+      }
+
+      triedPages.push(`${page}:no-match(${raw.length} raw)`);
     }
   }
+
+  console.error(
+    `[anilist] getRandomCharacter gave up after exhausting all page stops. ` +
+    `opts=${JSON.stringify(opts)} pages tried: ${triedPages.join(', ')}`,
+  );
 
   return null; // gave up — caller should handle gracefully
 }
