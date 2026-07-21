@@ -24,6 +24,39 @@ const PAGE_RANGE = {
   all:           MAX_PAGE,
 };
 
+// ── Base pull rates (no pity active) ─────────────────────────────────────────
+// These are EXPLICIT weights so tier frequency is controlled independently of
+// the AniList page distribution. Without this, randomly picking from 1–160
+// pages makes Epic appear ~15% of the time (pages 1–24 / 160 total) instead
+// of the intended ~4%, and Common almost never appears.
+const BASE_RATES = [
+  { tier: 'Legendary', weight:  1 },
+  { tier: 'Epic',      weight:  4 },
+  { tier: 'Rare',      weight: 15 },
+  { tier: 'Uncommon',  weight: 30 },
+  { tier: 'Common',    weight: 50 },
+];
+const BASE_TOTAL = BASE_RATES.reduce((s, r) => s + r.weight, 0);
+
+function rollBaseTier() {
+  let r = Math.random() * BASE_TOTAL;
+  for (const { tier, weight } of BASE_RATES) {
+    r -= weight;
+    if (r <= 0) return tier;
+  }
+  return 'Common';
+}
+
+// Page ranges to search for each tier on a normal (non-pity) pull.
+// These map to where AniList FAVOURITES_DESC naturally concentrates each tier.
+const TIER_SEARCH = {
+  Legendary: { minPage: 1,   maxPage: 4   },
+  Epic:      { minPage: 5,   maxPage: 24  }, // skip legendary pages 1-4
+  Rare:      { minPage: 24,  maxPage: 80  },
+  Uncommon:  { minPage: 80,  maxPage: 130 },
+  Common:    { minPage: 130, maxPage: MAX_PAGE },
+};
+
 const QUERY = `
 query ($page: Int, $perPage: Int) {
   Page(page: $page, perPage: $perPage) {
