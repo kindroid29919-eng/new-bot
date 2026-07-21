@@ -92,6 +92,8 @@ async function init() {
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_harem_user ON harem(user_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_pulls_user_time ON waifu_pulls(user_id, pulled_at);`);
+  // Prevent duplicate entries at DB level (one character per user)
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_harem_unique_char ON harem(user_id, character_id);`);
 
   console.log('[db] schema ready (harem, waifu_pulls, waifu_pity, currency, duel_log, shop_purchases)');
 }
@@ -212,10 +214,20 @@ async function countHarem(userId) {
   return rows[0].count;
 }
 
+/** Returns true if the user already has this character in their harem. */
+async function isInHarem(userId, characterId) {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM harem WHERE user_id = $1 AND character_id = $2',
+    [userId, characterId],
+  );
+  return rows.length > 0;
+}
+
 async function addToHarem(userId, character) {
   await pool.query(
     `INSERT INTO harem (user_id, character_id, character_name, source_title, image_url, tier, favourites)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (user_id, character_id) DO NOTHING`,
     [
       userId,
       character.id,
@@ -420,6 +432,7 @@ module.exports = {
   bumpPity,
   // harem
   countHarem,
+  isInHarem,
   addToHarem,
   getHarem,
   removeFromHarem,

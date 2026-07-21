@@ -17,8 +17,9 @@ const { getRandomCharacter } = require('../utils/anilist.js');
 const db = require('../utils/db.js');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const PULL_COST      = 20;
-const TEN_PULL_COST  = PULL_COST * 10; // 200
+const PULL_COST        = 20;
+const TEN_PULL_COST    = PULL_COST * 10; // 200
+const DUPE_COMPENSATION = 100; // petals given when you pull a character you already own
 
 const CLAIM_WINDOW_MS = 60_000;
 const MARRY_EMOJI     = '💍';
@@ -42,21 +43,30 @@ const NORM_SLOTS = SLOT_EMOJIS.map(norm);
 /**
  * Pulls a single character respecting the current pity state.
  * Mutates `pityState` in place and returns the character (or null on API fail).
+ *
+ * @param {{ pulls_since_rare, pulls_since_epic, pulls_since_legendary }} pityState — mutated in place
+ * @param {Set<number>|null} seenIds — ids already pulled this session; prevents duplicates
  */
-async function pullOne(pityState) {
+async function pullOne(pityState, seenIds = null) {
   const opts = db.pityOpts(pityState);
-  let char = await getRandomCharacter(opts);
+  let char = await getRandomCharacter(opts, seenIds);
 
-  // If the legendary-pity pull failed (AniList rate-limited pages 1–4 and no
-  // stale cache was available), fall back to Epic so the user still gets a
-  // character and doesn't get permanently stuck at the 100-pull mark.
+  // Bug fix: when legendary pity fires but AniList fails (rate-limited, no
+  // stale cache), fall back to Epic so the user gets a character.
+  // CRITICAL: we still advance pity as if a Legendary was pulled — otherwise
+  // pulls_since_legendary stays ≥100 and EVERY subsequent pull forces this
+  // fallback path, permanently locking the user into Epic-only pulls.
+  let pityTier = char?.tier.name ?? null;
   if (!char && opts.requireLegendary) {
     console.warn('[waifu] Legendary pull failed — falling back to Epic tier');
-    char = await getRandomCharacter({ requireEpicOrBetter: true });
+    char = await getRandomCharacter({ requireEpicOrBetter: true }, seenIds);
+    // Consume the legendary pity regardless of what we actually returned
+    pityTier = 'Legendary';
   }
 
   if (char) {
-    Object.assign(pityState, db.advancePityState(pityState, char.tier.name));
+    if (seenIds) seenIds.add(char.id);
+    Object.assign(pityState, db.advancePityState(pityState, pityTier ?? char.tier.name));
   }
   return char;
 }
@@ -126,6 +136,20 @@ async function executeSingle(message) {
   });
 
   collector.on('collect', async () => {
+    const alreadyOwned = await db.isInHarem(userId, character.id);
+    if (alreadyOwned) {
+      await db.addBalance(userId, DUPE_COMPENSATION);
+      await sent.edit({
+        embeds: [EmbedBuilder.from(embed)
+          .setDescription(
+            `**From:** ${character.source}\n` +
+            `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
+            `🔁 You already have **${character.name}**! Received **${DUPE_COMPENSATION} 🌸 Petals** as compensation.`,
+          )
+          .setColor(0xf39c12)],
+      }).catch(() => {});
+      return;
+    }
     await db.addToHarem(userId, character);
     await sent.edit({
       embeds: [EmbedBuilder.from(embed)
@@ -183,9 +207,16 @@ async function executeTenPull(message) {
   const pityState = await db.getPityState(userId);
   const pulls = [];
   let refundPulls = 0;
+  // seenIds deduplicates within this 10-pull session
+  const seenIds = new Set();
 
   for (let i = 0; i < 10; i++) {
-    const char = await pullOne(pityState);
+    let char = null;
+    // Retry up to 3 times before giving up on this slot, so API hiccups
+    // don't silently shrink a 10-pull to 6 or 7 characters.
+    for (let attempt = 0; attempt < 3 && !char; attempt++) {
+      char = await pullOne(pityState, seenIds);
+    }
     if (char) {
       pulls.push(char);
     } else {
@@ -209,24 +240,24 @@ async function executeTenPull(message) {
   const newBalance = await db.getBalance(userId);
 
   // Track claim state per pull index
-  // claimStatus[i]: 'pending' | 'married' | 'full'
+  // claimStatus[i]: 'pending' | 'married' | 'full' | 'dupe'
   const claimStatus = pulls.map(() => 'pending');
   let slotsUsed = haremCount; // tracks harem size locally to avoid extra DB calls
 
   const buildEmbed = (final = false) => {
     const lines = pulls.map((char, i) => {
       const emoji  = SLOT_EMOJIS[i];
-      const status = claimStatus[i] === 'married'
-        ? '✅'
-        : claimStatus[i] === 'full'
-          ? '🚫'
-          : final ? '💨' : '⬜';
+      const status = claimStatus[i] === 'married' ? '✅'
+        : claimStatus[i] === 'full'  ? '🚫'
+        : claimStatus[i] === 'dupe'  ? `🔁 (+${DUPE_COMPENSATION}🌸)`
+        : final ? '💨' : '⬜';
       return `${emoji} ${char.tier.emoji} **${char.name}** — *${char.source}*  ${status}`;
     });
 
     const claimed  = claimStatus.filter(s => s === 'married').length;
+    const dupes    = claimStatus.filter(s => s === 'dupe').length;
     const footer   = final
-      ? `${claimed} married, ${pulls.length - claimed} escaped • 🌸 ${newBalance} Petals remaining`
+      ? `${claimed} married${dupes ? `, ${dupes} dupe (${dupes * DUPE_COMPENSATION}🌸 back)` : ''}, ${pulls.length - claimed - dupes} escaped • 🌸 ${newBalance} Petals remaining`
       : `React with the numbers to marry! 60s window • 🌸 ${newBalance} Petals remaining`;
 
     // Highlight the best tier colour in the banner
@@ -260,6 +291,15 @@ async function executeTenPull(message) {
     const idx = NORM_SLOTS.indexOf(norm(reaction.emoji.name));
     if (idx === -1 || idx >= pulls.length) return;
     if (claimStatus[idx] !== 'pending') return; // already acted on
+
+    // Check for duplicate before anything else
+    const alreadyOwned = await db.isInHarem(userId, pulls[idx].id);
+    if (alreadyOwned) {
+      claimStatus[idx] = 'dupe';
+      await db.addBalance(userId, DUPE_COMPENSATION);
+      await sent.edit({ embeds: [buildEmbed()] }).catch(() => {});
+      return;
+    }
 
     if (slotsUsed >= db.MAX_HAREM_SIZE) {
       claimStatus[idx] = 'full';
