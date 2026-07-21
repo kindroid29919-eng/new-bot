@@ -92,6 +92,20 @@ async function init() {
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_harem_user ON harem(user_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_pulls_user_time ON waifu_pulls(user_id, pulled_at);`);
+
+  // Self-heal: if the harem table already has duplicate (user_id, character_id)
+  // rows from before this unique constraint existed, the CREATE UNIQUE INDEX
+  // below throws every single startup, init() aborts on it, the index never
+  // gets created, and every real marry then fails with Postgres 42P10
+  // ("no unique or exclusion constraint matching the ON CONFLICT specification").
+  // Clearing duplicates first makes the index creation idempotent for good.
+  await pool.query(`
+    DELETE FROM harem a USING harem b
+    WHERE a.user_id = b.user_id
+      AND a.character_id = b.character_id
+      AND a.id < b.id;
+  `);
+
   // Prevent duplicate entries at DB level (one character per user)
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_harem_unique_char ON harem(user_id, character_id);`);
 
