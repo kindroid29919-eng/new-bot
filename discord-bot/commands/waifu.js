@@ -51,22 +51,21 @@ async function pullOne(pityState, seenIds = null) {
   const opts = db.pityOpts(pityState);
   let char = await getRandomCharacter(opts, seenIds);
 
-  // Bug fix: when legendary pity fires but AniList fails (rate-limited, no
-  // stale cache), fall back to Epic so the user gets a character.
-  // CRITICAL: we still advance pity as if a Legendary was pulled — otherwise
-  // pulls_since_legendary stays ≥100 and EVERY subsequent pull forces this
-  // fallback path, permanently locking the user into Epic-only pulls.
-  let pityTier = char?.tier.name ?? null;
+  // When legendary pity fires but AniList can't produce one right now
+  // (rate-limited, cold cache, narrow Female-filtered pool on pages 1–4),
+  // fall back to Epic so the user still gets a character this pull.
+  // IMPORTANT: do NOT credit this as a Legendary — the guarantee must stay
+  // active (pulls_since_legendary keeps climbing) until a real Legendary is
+  // actually delivered. Previously this was marked as a Legendary pull,
+  // which silently reset the counter without ever paying out the guarantee.
   if (!char && opts.requireLegendary) {
-    console.warn('[waifu] Legendary pull failed — falling back to Epic tier');
+    console.warn('[waifu] Legendary pull failed — falling back to Epic tier (pity NOT consumed)');
     char = await getRandomCharacter({ requireEpicOrBetter: true }, seenIds);
-    // Consume the legendary pity regardless of what we actually returned
-    pityTier = 'Legendary';
   }
 
   if (char) {
     if (seenIds) seenIds.add(char.id);
-    Object.assign(pityState, db.advancePityState(pityState, pityTier ?? char.tier.name));
+    Object.assign(pityState, db.advancePityState(pityState, char.tier.name));
   }
   return char;
 }
@@ -150,7 +149,13 @@ async function executeSingle(message) {
       }).catch(() => {});
       return;
     }
-    await db.addToHarem(userId, character);
+    try {
+      await db.addToHarem(userId, character);
+    } catch (err) {
+      console.error('[waifu] addToHarem failed:', err);
+      await sent.reply('⚠️ Something went wrong saving that marriage — please try `x!waifu` again.').catch(() => {});
+      return;
+    }
     await sent.edit({
       embeds: [EmbedBuilder.from(embed)
         .setDescription(
@@ -307,7 +312,13 @@ async function executeTenPull(message) {
       return;
     }
 
-    await db.addToHarem(userId, pulls[idx]);
+    try {
+      await db.addToHarem(userId, pulls[idx]);
+    } catch (err) {
+      console.error('[waifu] addToHarem failed:', err);
+      await sent.reply('⚠️ Something went wrong saving that marriage — please try again.').catch(() => {});
+      return;
+    }
     claimStatus[idx] = 'married';
     slotsUsed++;
     await sent.edit({ embeds: [buildEmbed()] }).catch(() => {});
