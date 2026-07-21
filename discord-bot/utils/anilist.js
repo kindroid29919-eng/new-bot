@@ -2,6 +2,9 @@
 // official art and a genuine popularity signal (favourites count).
 // No API key required. Docs: https://docs.anilist.co/
 
+const fs   = require('fs');
+const path = require('path');
+
 const ANILIST_URL = 'https://graphql.anilist.co';
 const USER_AGENT  = 'Expose-Bot (ahadsg26@gmail.com)';
 
@@ -149,6 +152,70 @@ function cacheStats() {
 function clearCache() {
   pageCache.clear();
   characterCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Local Legendary supplement (BUG 2 FIX)
+// ---------------------------------------------------------------------------
+// Root cause of "Legendary pool is never being selected":
+//   Pages 1-4 (100 characters) are AniList's global top-100 by favourites,
+//   across ALL genders. Once that's narrowed to `gender === 'Female'`, the
+//   surviving pool is tiny — sometimes zero — because most globally
+//   top-favourited characters are male leads/protagonists. requireLegendary
+//   pulls were therefore failing almost every time, which is what forced the
+//   old code down the "fall back to Epic" path.
+//
+// Per product requirement, page count must stay capped at 4 (no wider
+// AniList fetch). Instead, known-good Legendary female characters can be
+// stored locally (id/name/image/source) and are merged in as a supplemental
+// pool whenever the AniList-sourced pool for pages 1-4 doesn't have enough
+// (or any) candidates. This guarantees requireLegendary pulls can always
+// succeed without touching pagination and without ever substituting a
+// lower tier.
+//
+// File format — data/legendary-local.json (ships as `[]`; see
+// data/legendary-local.example.json for the shape):
+//   [{ "id": 900001, "name": "...", "image": "https://...",
+//      "source": "...", "favourites": 50000, "mediaType": "ANIME" }]
+// Use ids outside AniList's real id space (e.g. 900000+) so a locally
+// added character can never collide with a real AniList character id.
+const LOCAL_LEGENDARY_PATH = path.join(__dirname, '..', 'data', 'legendary-local.json');
+
+let localLegendaryCache = null;
+
+function loadLocalLegendary() {
+  if (localLegendaryCache) return localLegendaryCache;
+  try {
+    const raw = fs.readFileSync(LOCAL_LEGENDARY_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    localLegendaryCache = Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('[anilist] failed to load local legendary pool:', err.message);
+    }
+    localLegendaryCache = [];
+  }
+  return localLegendaryCache;
+}
+
+/** Exposed so an admin command can force a reload after editing the JSON file. */
+function reloadLocalLegendary() {
+  localLegendaryCache = null;
+  return loadLocalLegendary();
+}
+
+function getLocalLegendaryCandidates(excludeIds) {
+  return loadLocalLegendary()
+    .filter(c => !excludeIds || !excludeIds.has(c.id))
+    .map(c => ({
+      id:         c.id,
+      name:       c.name,
+      image:      c.image,
+      favourites: c.favourites ?? 50000,
+      source:     c.source ?? 'Unknown',
+      mediaType:  c.mediaType ?? 'ANIME',
+      tier:       { name: 'Legendary', emoji: '🌟' },
+    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -320,12 +387,30 @@ async function getRandomCharacter(opts = {}, excludeIds = null, maxAttempts = 15
     }
   }
 
+  // BUG 2 FIX: AniList pages 1-4 exhausted with no Female Legendary match.
+  // Before giving up, check the locally-stored supplemental Legendary pool.
+  // This is scoped to requireLegendary only — it must never engage for
+  // other tiers, and it must never substitute a different tier.
+  if (requireLegendary) {
+    const localCandidates = getLocalLegendaryCandidates(excludeIds);
+    if (localCandidates.length) {
+      const picked = localCandidates[Math.floor(Math.random() * localCandidates.length)];
+      cacheCharacter(picked);
+      console.warn(
+        '[anilist] Legendary served from local supplemental pool ' +
+        '(AniList pages 1-4 had no unseen Female Legendary match)',
+      );
+      return picked;
+    }
+  }
+
   console.error(
-    `[anilist] getRandomCharacter gave up after exhausting all page stops. ` +
+    `[anilist] getRandomCharacter gave up after exhausting all page stops` +
+    `${requireLegendary ? ' and the local Legendary supplement' : ''}. ` +
     `opts=${JSON.stringify(opts)} pages tried: ${triedPages.join(', ')}`,
   );
 
-  return null; // gave up — caller should handle gracefully
+  return null; // gave up — caller should handle gracefully (refund, not a tier downgrade)
 }
 
 module.exports = {
@@ -335,4 +420,6 @@ module.exports = {
   getCharacterFromCache,
   cacheStats,
   clearCache,
+  // local legendary supplement
+  reloadLocalLegendary,
 };
