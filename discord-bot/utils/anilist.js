@@ -215,14 +215,15 @@ function toCharacter(c) {
 /**
  * Pull a single random character matching the requested tier constraint.
  *
- * @param {object} opts
+ * @param {object}  opts
  * @param {boolean} [opts.requireLegendary]     — force Legendary (100-pull pity)
  * @param {boolean} [opts.requireEpicOrBetter]  — force Epic+ (50-pull pity)
  * @param {boolean} [opts.requireRareOrBetter]  — force Rare+ (30-pull pity)
+ * @param {Set<number>|null} [excludeIds=null]  — character ids already pulled this session (dedup)
  * @param {number}  [maxAttempts=15]
  * @returns {Promise<object|null>}
  */
-async function getRandomCharacter(opts = {}, maxAttempts = 15) {
+async function getRandomCharacter(opts = {}, excludeIds = null, maxAttempts = 15) {
   const {
     requireLegendary    = false,
     requireEpicOrBetter = false,
@@ -272,6 +273,7 @@ async function getRandomCharacter(opts = {}, maxAttempts = 15) {
       const candidates = raw
         .filter(c => c.gender === 'Female')
         .filter(c => (c.favourites ?? 0) >= MIN_FAVOURITES)
+        .filter(c => !excludeIds || !excludeIds.has(c.id))
         .map(toCharacter)
         .filter(tierFilter);
 
