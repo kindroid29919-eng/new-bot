@@ -73,10 +73,19 @@ const PAGE_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h — favourites drift slowly
 const pageCache = new Map();      // page -> { characters: raw[], fetchedAt }
 const characterCache = new Map(); // id   -> parsed character object
 
-function getCachedPage(page) {
+// Tracks pages that are currently rate-limited: page -> { until: timestamp }
+// Stale cache is served for rate-limited pages instead of hitting AniList again.
+const rateLimitedUntil = new Map();
+
+/**
+ * @param {number} page
+ * @param {boolean} [allowStale=false] — return cached data even if TTL has expired
+ */
+function getCachedPage(page, allowStale = false) {
   const entry = pageCache.get(page);
   if (!entry) return null;
-  if (Date.now() - entry.fetchedAt > PAGE_CACHE_TTL_MS) {
+  const expired = Date.now() - entry.fetchedAt > PAGE_CACHE_TTL_MS;
+  if (expired && !allowStale) {
     pageCache.delete(page);
     return null;
   }
@@ -112,6 +121,14 @@ function clearCache() {
 // ---------------------------------------------------------------------------
 
 async function fetchPage(page) {
+  // If this page is currently rate-limited, serve stale cache rather than
+  // hammering AniList again — this is the primary fix for the legendary-pity
+  // stuck-loop bug where pages 1–4 kept getting 429 but were never cached.
+  const rl = rateLimitedUntil.get(page);
+  if (rl && Date.now() < rl) {
+    return getCachedPage(page, true) ?? []; // stale or empty — don't hit API
+  }
+
   const cached = getCachedPage(page);
   if (cached) return cached;
 
@@ -131,13 +148,21 @@ async function fetchPage(page) {
     });
     clearTimeout(timeout);
 
-    const retryAfter = res.headers.get('retry-after');
-    const rlRemaining = res.headers.get('x-ratelimit-remaining');
-    if (retryAfter || (rlRemaining !== null && Number(rlRemaining) <= 1)) {
+    const retryAfter    = res.headers.get('retry-after');
+    const rlRemaining   = res.headers.get('x-ratelimit-remaining');
+    const isRateLimited = res.status === 429 ||
+      (rlRemaining !== null && Number(rlRemaining) <= 0);
+
+    if (isRateLimited || retryAfter) {
+      const cooldownSec = Number(retryAfter) || 60;
+      rateLimitedUntil.set(page, Date.now() + cooldownSec * 1000);
       console.warn(
-        `[anilist] rate-limit signal on page ${page}: status=${res.status} ` +
-        `retry-after=${retryAfter ?? 'n/a'} remaining=${rlRemaining ?? 'n/a'}`,
+        `[anilist] rate-limited on page ${page}: status=${res.status} ` +
+        `retry-after=${retryAfter ?? 'n/a'} remaining=${rlRemaining ?? 'n/a'} ` +
+        `— backing off ${cooldownSec}s, serving stale cache if available`,
       );
+      // Serve stale cache so the pull doesn't fail outright
+      return getCachedPage(page, true) ?? [];
     }
 
     if (!res.ok) {
@@ -214,7 +239,11 @@ async function getRandomCharacter(opts = {}, maxAttempts = 15) {
   let pageStops, tierFilter;
 
   if (requireLegendary) {
-    pageStops  = [PAGE_RANGE.legendary, PAGE_RANGE.epicOrBetter, PAGE_RANGE.rareOrBetter, PAGE_RANGE.all];
+    // Legendary chars live exclusively on pages 1–4 (sorted by FAVOURITES_DESC).
+    // Escalating to wider page ranges with a Legendary filter is pointless —
+    // those pages never contain Legendary characters and only burn rate-limit
+    // budget, which is exactly what caused the stuck-at-100-pulls loop.
+    pageStops  = [PAGE_RANGE.legendary];
     tierFilter = c => c.tier.name === 'Legendary';
   } else if (requireEpicOrBetter) {
     pageStops  = [PAGE_RANGE.epicOrBetter, PAGE_RANGE.rareOrBetter, PAGE_RANGE.all];

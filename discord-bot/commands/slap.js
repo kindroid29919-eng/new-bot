@@ -36,12 +36,11 @@ async function execute(message, args) {
     .setTimestamp();
 
   const gif = await getGif('slap');
-  const footerBase = 'No actual users were harmed in the making of this slap.';
   if (gif) {
     embed.setImage(gif.url);
-    embed.setFooter({ text: gif.anime_name ? `${footerBase} · Source: ${gif.anime_name}` : footerBase });
+    embed.setFooter({ text: gif.anime_name ? `Source: ${gif.anime_name}` : `By ${message.author.tag}` });
   } else {
-    embed.setFooter({ text: footerBase });
+    embed.setFooter({ text: `By ${message.author.tag}` });
   }
 
   await message.reply({ embeds: [embed] });

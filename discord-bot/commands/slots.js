@@ -7,16 +7,17 @@
 const { EmbedBuilder } = require('discord.js');
 const db = require('../utils/db.js');
 
-const MAX_BET = 600;
+const MAX_BET = 10000;
 
 // Symbol pool: [symbol, weight, displayName]
+// Lemon weight is boosted so P(🍋🍋🍋 × 2) ≈ P(no match × 0)
 const SYMBOLS = [
-  { s: '🍒', w: 35, name: 'Cherry' },
-  { s: '🍋', w: 28, name: 'Lemon' },
-  { s: '🍊', w: 20, name: 'Orange' },
-  { s: '⭐', w: 10, name: 'Star' },
-  { s: '💎', w: 5,  name: 'Diamond' },
-  { s: '🌸', w: 2,  name: 'Petal' },
+  { s: '🍒', w: 35,  name: 'Cherry' },
+  { s: '🍋', w: 105, name: 'Lemon' },
+  { s: '🍊', w: 20,  name: 'Orange' },
+  { s: '⭐', w: 10,  name: 'Star' },
+  { s: '💎', w: 5,   name: 'Diamond' },
+  { s: '🌸', w: 2,   name: 'Petal' },
 ];
 
 const TOTAL_WEIGHT = SYMBOLS.reduce((a, s) => a + s.w, 0);
@@ -60,12 +61,8 @@ function calcResult(reels, bet) {
     return { label, mult, net: Math.round(bet * mult) };
   }
 
-  // No match — previously always a total loss. Now 50/50 between a total
-  // loss (0x) and a bonus double-up (2x), so a "no match" spin isn't
-  // automatically a guaranteed loss either.
-  const mult = Math.random() < 0.5 ? 0 : 2;
-  const label = mult === 0 ? `💔 No match` : `🍀 No match — bonus payout!`;
-  return { label, mult, net: Math.round(bet * mult) };
+  // No match — total loss, no exceptions.
+  return { label: `💔 No match`, mult: 0, net: 0 };
 }
 
 async function execute(message, args) {
@@ -123,8 +120,8 @@ async function execute(message, args) {
     .addFields(
       { name: '🌸 Payout table', value:
         '🌸🌸🌸 = ×20 | 💎💎💎 = ×10\n⭐⭐⭐ = ×5  | 🍊🍊🍊 = ×3\n🍋🍋🍋 = ×2  | 🍒🍒🍒 = ×1.5\n' +
-        'Two of a kind = ×0.5 or ×1.5 (50/50)\n' +
-        'No match = ×0 or ×2 (50/50)',
+        'Two of a kind = small win or loss\n' +
+        'No match = ×0',
         inline: false,
       },
     )

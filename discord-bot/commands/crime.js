@@ -63,7 +63,7 @@ async function execute(message, args) {
       { name: '🔍 Crime',      value: crime,    inline: false },
       { name: '🔨 Sentence',   value: sentence, inline: false },
     )
-    .setFooter({ text: `Filed by ${message.author.tag}  •  All crimes are fictional` })
+    .setFooter({ text: `Filed by ${message.author.tag}` })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });

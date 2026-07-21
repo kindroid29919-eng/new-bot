@@ -45,7 +45,16 @@ const NORM_SLOTS = SLOT_EMOJIS.map(norm);
  */
 async function pullOne(pityState) {
   const opts = db.pityOpts(pityState);
-  const char = await getRandomCharacter(opts);
+  let char = await getRandomCharacter(opts);
+
+  // If the legendary-pity pull failed (AniList rate-limited pages 1–4 and no
+  // stale cache was available), fall back to Epic so the user still gets a
+  // character and doesn't get permanently stuck at the 100-pull mark.
+  if (!char && opts.requireLegendary) {
+    console.warn('[waifu] Legendary pull failed — falling back to Epic tier');
+    char = await getRandomCharacter({ requireEpicOrBetter: true });
+  }
+
   if (char) {
     Object.assign(pityState, db.advancePityState(pityState, char.tier.name));
   }

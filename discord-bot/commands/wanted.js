@@ -39,7 +39,6 @@ async function execute(message, args) {
   const embed = new EmbedBuilder()
     .setColor(0xff4757)
     .setTitle('🚨  W A N T E D  🚨')
-    .setDescription(`*This poster is issued by the Bureau of Completely Fictional Crimes.*`)
     .addFields(
       { name: '🧑 Name',          value: target,   inline: true },
       { name: '🎭 Alias',         value: alias,    inline: true },
@@ -48,7 +47,7 @@ async function execute(message, args) {
       { name: '💰 Reward',        value: bounty,   inline: true },
       { name: '📍 Last Seen',     value: location, inline: true },
     )
-    .setFooter({ text: `Reported by ${message.author.tag}  •  All crimes are fictional` })
+    .setFooter({ text: `Reported by ${message.author.tag}` })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });
