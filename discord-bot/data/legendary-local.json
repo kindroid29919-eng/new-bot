@@ -1,0 +1,50 @@
+[
+  {
+    "id": 900002,
+    "name": "Mahiru Shiina",
+    "image": "",
+    "source": "The Angel Next Door Spoils Me Rotten",
+    "favourites": 0,
+    "mediaType": "ANIME"
+  },
+  {
+    "id": 900003,
+    "name": "Kurumi Tokisaki",
+    "image": "",
+    "source": "Date A Live",
+    "favourites": 0,
+    "mediaType": "ANIME"
+  },
+  {
+    "id": 900004,
+    "name": "Alisa Mikhailovna Kujou",
+    "image": "",
+    "source": "Alya Sometimes Hides Her Feelings in Russian",
+    "favourites": 0,
+    "mediaType": "ANIME"
+  },
+  {
+    "id": 900005,
+    "name": "Waguri Kaoruko",
+    "image": "",
+    "source": "The Fragrant Flower Blooms with Dignity",
+    "favourites": 0,
+    "mediaType": "ANIME"
+  },
+  {
+    "id": 900006,
+    "name": "Miku Nakano",
+    "image": "",
+    "source": "The Quintessential Quintuplets",
+    "favourites": 0,
+    "mediaType": "ANIME"
+  },
+  {
+    "id": 900007,
+    "name": "Mai Sakurajima",
+    "image": "",
+    "source": "Rascal Does Not Dream of Bunny Girl Senpai",
+    "favourites": 0,
+    "mediaType": "ANIME"
+  }
+]

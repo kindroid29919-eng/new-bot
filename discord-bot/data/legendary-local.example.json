@@ -1,0 +1,10 @@
+[
+  {
+    "id": 900001,
+    "name": "Example Character Name",
+    "image": "https://example.com/full-image-url.jpg",
+    "source": "Example Anime Title",
+    "favourites": 50000,
+    "mediaType": "ANIME"
+  }
+]
