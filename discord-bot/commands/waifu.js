@@ -49,20 +49,24 @@ const NORM_SLOTS = SLOT_EMOJIS.map(norm);
  */
 async function pullOne(pityState, seenIds = null) {
   const opts = db.pityOpts(pityState);
-  let char = await getRandomCharacter(opts, seenIds);
+  const char = await getRandomCharacter(opts, seenIds);
 
-  // When legendary pity fires but AniList can't produce one right now
-  // (rate-limited, cold cache, narrow Female-filtered pool on pages 1–4),
-  // fall back to Epic so the user still gets a character this pull.
-  // IMPORTANT: do NOT credit this as a Legendary — the guarantee must stay
-  // active (pulls_since_legendary keeps climbing) until a real Legendary is
-  // actually delivered. Previously this was marked as a Legendary pull,
-  // which silently reset the counter without ever paying out the guarantee.
-  if (!char && opts.requireLegendary) {
-    console.warn('[waifu] Legendary pull failed — falling back to Epic tier (pity NOT consumed)');
-    char = await getRandomCharacter({ requireEpicOrBetter: true }, seenIds);
-  }
-
+  // NOTE (Bug 1 fix): this used to fall back to an Epic pull whenever a
+  // requireLegendary roll came back empty. That fallback was NOT credited
+  // as a Legendary, so pulls_since_legendary stayed >= 100 — which meant
+  // pityOpts() kept returning requireLegendary on every remaining slot of
+  // the 10-pull, and every one of them hit the same fallback. That's why
+  // the "guaranteed 101st pull" was coming back as 10 Epics instead of
+  // 1 Legendary + 9 normal pulls.
+  //
+  // Bug 2's fix (see utils/anilist.js — local Legendary supplement) means
+  // getRandomCharacter({ requireLegendary: true }) now reliably succeeds
+  // without widening pagination. If it still somehow returns null (e.g.
+  // AniList AND the local pool are both unavailable), we no longer paper
+  // over it with a lower tier: the caller's existing null-handling
+  // (refund the petals for that slot) takes over instead, and the pity
+  // counter correctly stays un-reset so the guarantee is still owed next
+  // time.
   if (char) {
     if (seenIds) seenIds.add(char.id);
     Object.assign(pityState, db.advancePityState(pityState, char.tier.name));
