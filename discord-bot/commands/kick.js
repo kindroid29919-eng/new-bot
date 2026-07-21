@@ -84,8 +84,7 @@ async function execute(message, args) {
     .setTimestamp();
 
   const gif = await getGif('kick');
-  const footerBase = 'No actual users were harmed in the making of this kick.';
-  embed.setFooter({ text: gif?.anime_name ? `${footerBase} · Source: ${gif.anime_name}` : footerBase });
+  embed.setFooter({ text: gif?.anime_name ? `Source: ${gif.anime_name}` : `By ${message.author.tag}` });
   if (gif) embed.setImage(gif.url);
 
   // --- Perform the actual kick ---

@@ -40,7 +40,7 @@ async function execute(message, args) {
       { name: 'Outcome', value: outcome, inline: false },
       { name: 'Officiant\'s Note', value: comment, inline: false }
     )
-    .setFooter({ text: `Disclaimer: This is legally non-binding.` })
+    .setFooter({ text: `Officiated by ${message.author.tag}` })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });

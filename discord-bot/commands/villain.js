@@ -58,7 +58,7 @@ async function execute(message, args) {
       { name: '⚡ Power',        value: power,    inline: false },
       { name: '💧 Weakness',     value: weakness, inline: false },
     )
-    .setFooter({ text: `Profiled by ${message.author.tag}  •  Purely fictional` })
+    .setFooter({ text: `Profiled by ${message.author.tag}` })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });
