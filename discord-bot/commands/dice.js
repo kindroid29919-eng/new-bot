@@ -1,6 +1,6 @@
 /**
  * dice.js — x!dice [sides | NdM]         → fun roll (no bet)
- *           x!dice bet <amount>           → bet up to 60 Petals; roll d6, 4–6 wins
+ *           x!dice bet <amount>           → bet up to 600 Petals; roll d6, 4–6 wins
  *
  * Examples:
  *   x!dice         → rolls 1d6
@@ -12,7 +12,7 @@
 const { EmbedBuilder } = require('discord.js');
 const db = require('../utils/db.js');
 
-const MAX_BET = 60;
+const MAX_BET = 600;
 
 async function execute(message, args) {
   // ── Betting mode ──────────────────────────────────────────────────────────

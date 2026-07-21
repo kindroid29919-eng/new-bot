@@ -2,7 +2,7 @@
  * coinflip.js — x!coinflip [heads|tails] [amount]
  *
  * Without a bet:  x!coinflip          → just flips for fun
- * With a bet:     x!coinflip heads 25 → bet 25 Petals on heads (max 30)
+ * With a bet:     x!coinflip heads 25 → bet 25 Petals on heads (max 600)
  *
  * Win → earn the bet amount. Lose → lose the bet amount.
  */
@@ -10,7 +10,7 @@
 const { EmbedBuilder } = require('discord.js');
 const db = require('../utils/db.js');
 
-const MAX_BET = 60;
+const MAX_BET = 600;
 
 async function execute(message, args) {
   const result = Math.random() < 0.5 ? 'heads' : 'tails';
