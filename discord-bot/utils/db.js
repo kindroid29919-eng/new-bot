@@ -19,7 +19,7 @@ const pool = new Pool({
     : { rejectUnauthorized: false },
 });
 
-const MAX_HAREM_SIZE = 8;
+const MAX_HAREM_SIZE = 16;
 
 async function init() {
   await pool.query(`
