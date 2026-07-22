@@ -254,6 +254,13 @@ async function addToHarem(userId, character) {
   );
 }
 
+async function updateHaremImage(userId, characterId, imageUrl) {
+  await pool.query(
+    `UPDATE harem SET image_url = $1 WHERE user_id = $2 AND character_id = $3`,
+    [imageUrl, userId, characterId],
+  );
+}
+
 // Ordered consistently (tier, then favourites) so the numbers shown in
 // x!harem line up with what x!view / x!unmarry expect.
 async function getHarem(userId) {
@@ -448,6 +455,7 @@ module.exports = {
   countHarem,
   isInHarem,
   addToHarem,
+  updateHaremImage,
   getHarem,
   removeFromHarem,
   transferHaremEntry,
