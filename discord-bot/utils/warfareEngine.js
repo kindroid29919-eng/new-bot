@@ -207,22 +207,28 @@ async function runWarfare(war) {
     await animateRound(fA, fB, log, war.channelId, roundNum);
 
     await sleep(600);
-    if (channel) {
-      const winFighter = winner === 'A' ? fA : fB;
-      const roundEmbed = new EmbedBuilder()
-        .setColor(0xffd700)
-        .setDescription(
-          `**Round ${roundNum} over!** 🏆 ${TIER_EMOJI[winFighter.tier]} **${winFighter.name}** wins!\n` +
-          `(${winFighter.currentHp}/${winFighter.maxHp} HP remaining — advancing to next round)`,
-        );
-      await channel.send({ embeds: [roundEmbed] }).catch(() => {});
-    }
 
     roundSummary.push({
       round: roundNum,
       winner: winner,
       aFighter: fA.name, bFighter: fB.name,
     });
+
+    // Determine whether this round ends the match BEFORE incrementing indices
+    const winFighter  = winner === 'A' ? fA : fB;
+    const isMatchOver = (winner === 'A' && bIdx === 2) || (winner === 'B' && aIdx === 2);
+
+    if (channel) {
+      const roundEmbed = new EmbedBuilder()
+        .setColor(0xffd700)
+        .setDescription(
+          isMatchOver
+            ? `**Round ${roundNum} — Match Over!** 🏆 ${TIER_EMOJI[winFighter.tier]} **${winFighter.name}** lands the final blow!`
+            : `**Round ${roundNum} over!** 🏆 ${TIER_EMOJI[winFighter.tier]} **${winFighter.name}** wins!\n` +
+              `(${winFighter.currentHp}/${winFighter.maxHp} HP remaining — advancing to next round)`,
+        );
+      await channel.send({ embeds: [roundEmbed] }).catch(() => {});
+    }
 
     if (winner === 'A') {
       // A killed a B fighter — A's score goes up, move to next B fighter
@@ -255,9 +261,12 @@ async function runWarfare(war) {
     killedFighters.reduce((sum, f) => sum + Math.round(BASE_REWARD * (TIER_REWARD_MULT[f.tier] ?? 1)), 0),
   );
 
+  const winnerKOs = challengerWon ? aScore : bScore;
+  const loserKOs  = challengerWon ? bScore : aScore;
+
   await Promise.all([
     db.addBalance(winnerId, payout).catch(() => {}),
-    db.addBalance(loserId, CONSOLATION * kills || CONSOLATION).catch(() => {}),
+    db.addBalance(loserId, CONSOLATION).catch(() => {}),
     db.logDuel(winnerId, loserId, 'warfare-team', 'warfare-team', roundNum - 1, payout).catch(() => {}),
   ]);
 
@@ -272,10 +281,10 @@ async function runWarfare(war) {
       .setColor(0xffd700)
       .setTitle('🏆 Warfare — Final Result!')
       .setDescription(
-        `**Winner:** <@${winnerId}> (${challengerWon ? aKills : bKills} KOs)\n` +
-        `**Loser:** <@${loserId}>\n\n` +
+        `**Winner:** <@${winnerId}> (${winnerKOs} KOs)\n` +
+        `**Loser:** <@${loserId}> (${loserKOs} KOs)\n\n` +
         `🌸 **${winUser?.username ?? 'Winner'}** earns **${payout} Petals**!\n` +
-        `🌸 **${loseUser?.username ?? 'Loser'}** gets consolation Petals.\n\n` +
+        `🌸 **${loseUser?.username ?? 'Loser'}** gets **${CONSOLATION} Petals** consolation.\n\n` +
         `**Round recap:**\n${summary}`,
       );
     await channel.send({ embeds: [finalEmbed] }).catch(() => {});

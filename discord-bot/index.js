@@ -36,6 +36,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,       // Privileged — enable in Dev Portal
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences,       // Needed for x!members online count (Privileged — enable in Dev Portal)
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.DirectMessages,       // Needed to send DM-based duel prompts
   ],
