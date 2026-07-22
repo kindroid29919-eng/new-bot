@@ -2,17 +2,14 @@ const { EmbedBuilder } = require('discord.js');
 const fs   = require('fs');
 const path = require('path');
 const db   = require('../utils/db.js');
+const {
+  TIER_EMOJI, TYPE_EMOJI, LEVEL_EMOJI, LEVELUP_EMOJI,
+  getType, getLevelStats, xpToNextLevel, MAX_LEVEL,
+} = require('../utils/battleEngine.js');
 
-const tierEmoji = { Legendary: '🌟', Epic: '💎', Rare: '🔥', Uncommon: '✨', Common: '⚪' };
 const tierColor = { Legendary: 0xffd700, Epic: 0xa855f7, Rare: 0xff4757, Uncommon: 0x2ed573, Common: 0x95a5a6 };
 
 // ── Local pool image fallback ──────────────────────────────────────────────────
-// Characters promoted to Legendary via legendary-local.json were originally
-// stored in the harem DB with a blank image_url (before the image fields were
-// populated). This lookup repairs that on first view: if the DB record has no
-// image, we search the local pool by name and, if found, write the URL back so
-// every subsequent view is served straight from the DB.
-
 let _localPoolById   = null;
 let _localPoolByName = null;
 
@@ -21,8 +18,8 @@ function loadLocalPool() {
   try {
     const raw     = fs.readFileSync(path.join(__dirname, '..', 'data', 'legendary-local.json'), 'utf8');
     const entries = JSON.parse(raw);
-    _localPoolById   = new Map(entries.map(e => [e.id,                   e.image]));
-    _localPoolByName = new Map(entries.map(e => [e.name.toLowerCase(),   e.image]));
+    _localPoolById   = new Map(entries.map(e => [e.id,                 e.image]));
+    _localPoolByName = new Map(entries.map(e => [e.name.toLowerCase(), e.image]));
   } catch {
     _localPoolById   = new Map();
     _localPoolByName = new Map();
@@ -43,23 +40,36 @@ async function execute(message, args) {
 
   let imageUrl = character.image_url || '';
 
-  // Self-healing fallback: if the DB record has no image, check the local
-  // legendary pool by name and patch the DB record so future views are instant.
   if (!imageUrl) {
-    const poolImage = localPoolByName().get(character.character_name.toLowerCase());
+    loadLocalPool();
+    const poolImage = _localPoolByName.get(character.character_name.toLowerCase());
     if (poolImage) {
       imageUrl = poolImage;
       db.updateHaremImage(message.author.id, character.character_id, imageUrl).catch(() => {});
     }
   }
 
+  const type  = getType(character.character_id);
+  const level = character.level || 1;
+  const xp    = character.xp    || 0;
+  const stats = getLevelStats(character.tier, level);
+  const xpNeeded = level < MAX_LEVEL ? xpToNextLevel(level) : 0;
+
+  const levelLine = level < MAX_LEVEL
+    ? `${LEVEL_EMOJI} **Level ${level}** — ${xp}/${xpNeeded} XP to next level`
+    : `${LEVEL_EMOJI} **Level ${level}** ${LEVELUP_EMOJI} *(MAX)*`;
+
   const embed = new EmbedBuilder()
     .setColor(tierColor[character.tier] || 0xff85c0)
-    .setTitle(`${tierEmoji[character.tier]} ${character.character_name}`)
+    .setTitle(`${TIER_EMOJI[character.tier]} ${character.character_name}`)
     .setDescription(
       `**From:** ${character.source_title}\n` +
-        `**Tier:** ${tierEmoji[character.tier]} ${character.tier}\n` +
-        `**Married:** <t:${Math.floor(new Date(character.married_at).getTime() / 1000)}:R>`,
+      `**Tier:** ${TIER_EMOJI[character.tier]} ${character.tier}\n` +
+      `**Element:** ${TYPE_EMOJI[type]} ${type}\n` +
+      `${levelLine}\n\n` +
+      `❤️ **HP:** ${stats.hp}　⚔️ **ATK:** ${stats.atk}　🛡️ **DEF:** ${stats.def}\n` +
+      `✨ **Special:** ${stats.specialMult.toFixed(2)}x　⚡ **Energy needed:** ${stats.specialThreshold}\n\n` +
+      `**Married:** <t:${Math.floor(new Date(character.married_at).getTime() / 1000)}:R>`,
     )
     .setTimestamp();
 
@@ -72,7 +82,7 @@ module.exports = {
   execute,
   name: 'view',
   aliases: ['profile'],
-  description: 'View the picture and details of a married character.',
+  description: 'View the picture, level, and stats of a married character.',
   usage: 'view <number>',
   category: 'Game',
 };

@@ -1,14 +1,11 @@
 /**
  * warfareEngine.js — x!warfare 3v3 gauntlet handler
  * ─────────────────────────────────────────────────────────────────────────────
- * Reuses battleEngine.resolveDuel() three times in sequence.
- * Strategic hook: winner carries remaining HP% into the next round.
+ * Supports:
+ *   • PvP warfare  (x!warfare @user)  — both players pick 3 fighters + stance
+ *   • Bot warfare  (x!warfare bot)    — user picks team, bot auto-picks 3
  *
- * Interaction customIds routed from index.js:
- *   war_accept_<id>
- *   war_decline_<id>
- *   war_pick_<id>_<userId>         (StringSelectMenu, min 3, max 3)
- *   war_stance_<id>_<userId>_<stance>  (Button)
+ * XP on win: 20 XP each to all fighters in the winning team (PvP & Bot).
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -20,32 +17,58 @@ const {
 const db     = require('./db.js');
 const engine = require('./battleEngine.js');
 const { drawBattleFrame } = require('./battleCanvas.js');
+const { getRandomCharacter } = require('./anilist.js');
 
 const {
   TYPE_EMOJI, TIER_EMOJI, TIER_REWARD_MULT,
+  LEVEL_EMOJI, LEVELUP_EMOJI, BOT_EMOJI, VS_EMOJI,
   createFighter, resolveDuel,
 } = engine;
 
 const BASE_REWARD    = 50;
 const CONSOLATION    = 10;
+const XP_WIN         = 20; // per fighter in winning team
 const INVITE_TIMEOUT = 60_000;
 const PICK_TIMEOUT   = 120_000;
 const TURN_ANIM_MS   = 1_200;
 
-const activeWars = new Map(); // warId → state
-const userInWar  = new Map(); // userId → warId
+const activeWars = new Map();
+const userInWar  = new Map();
 
 let _client = null;
 function init(client) { _client = client; }
 function isUserInWar(userId) { return userInWar.has(userId); }
 
-function genId() {
-  return 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-}
-
+function genId() { return 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// ── Stance row (same style as duel) ──────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function computeBotLevel(harem) {
+  if (!harem.length) return 5;
+  const avg    = Math.round(harem.reduce((s, r) => s + (r.level || 1), 0) / harem.length);
+  const offset = Math.floor(Math.random() * 11) - 5;
+  return Math.max(1, Math.min(engine.MAX_LEVEL, avg + offset));
+}
+
+async function createBotRow(level) {
+  let char = null;
+  try { char = await getRandomCharacter({}); } catch {}
+  if (char) {
+    return {
+      id: null, character_id: char.id, character_name: char.name,
+      source_title: char.source, image_url: char.image,
+      tier: char.tier.name, level,
+    };
+  }
+  const tiers = ['Common', 'Uncommon', 'Rare'];
+  return {
+    id: null, character_id: 100000 + Math.floor(Math.random() * 800000),
+    character_name: 'Bot Fighter', source_title: 'System', image_url: null,
+    tier: tiers[Math.floor(Math.random() * tiers.length)], level,
+  };
+}
+
+// ── Stance buttons ────────────────────────────────────────────────────────────
 function buildStanceRow(warId, userId) {
   return [
     new ActionRowBuilder().addComponents(
@@ -59,25 +82,25 @@ function buildStanceRow(warId, userId) {
   ];
 }
 
-// ── Send team picker DM ───────────────────────────────────────────────────────
+// ── Team picker DM ────────────────────────────────────────────────────────────
 async function sendTeamPicker(userId, warId, harem) {
   const user = await _client.users.fetch(userId).catch(() => null);
   if (!user) return false;
 
   const options = harem.slice(0, 25).map((row, i) => {
-    const type = engine.getType(row.character_id);
+    const type  = engine.getType(row.character_id);
+    const level = row.level || 1;
     return {
-      label: `${i + 1}. ${row.character_name}`.slice(0, 100),
-      description: `${TIER_EMOJI[row.tier]} ${row.tier} | ${TYPE_EMOJI[type]} ${type}`.slice(0, 100),
-      value: String(i),
+      label:       `${i + 1}. ${row.character_name}`.slice(0, 100),
+      description: `${TIER_EMOJI[row.tier]} ${row.tier} ${LEVEL_EMOJI}Lv${level} | ${TYPE_EMOJI[type]} ${type}`.slice(0, 100),
+      value:       String(i),
     };
   });
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`war_pick_${warId}_${userId}`)
     .setPlaceholder('Select exactly 3 fighters (in fight order)…')
-    .setMinValues(3)
-    .setMaxValues(3)
+    .setMinValues(3).setMaxValues(3)
     .addOptions(options);
 
   const embed = new EmbedBuilder()
@@ -87,26 +110,24 @@ async function sendTeamPicker(userId, warId, harem) {
       'Select **exactly 3** characters to battle in sequence.\n\n' +
       '**Strategic tip:** The winner of each round carries their remaining HP% into the next.\n' +
       'Lead with a Legendary to snowball, or save it to clutch — it\'s your call.\n\n' +
-      '_Fight order = your harem order (Legendary first)._',
+      '_Fight order = your selection order._',
     )
     .setFooter({ text: 'You have 2 minutes to choose.' });
 
   try {
     await user.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
-// ── Send stance picker DM ─────────────────────────────────────────────────────
+// ── Stance picker DM ──────────────────────────────────────────────────────────
 async function sendStancePicker(userId, warId, teamRows) {
   const user = await _client.users.fetch(userId).catch(() => null);
   if (!user) return;
 
   const teamLines = teamRows.map((r, i) => {
     const type = engine.getType(r.character_id);
-    return `**${i + 1}.** ${TIER_EMOJI[r.tier]} ${r.character_name} — ${TYPE_EMOJI[type]} ${type}`;
+    return `**${i + 1}.** ${TIER_EMOJI[r.tier]} ${r.character_name} ${LEVEL_EMOJI}Lv${r.level || 1} — ${TYPE_EMOJI[type]} ${type}`;
   });
 
   const embed = new EmbedBuilder()
@@ -153,37 +174,46 @@ async function animateRound(fA, fB, log, channelId, roundNum) {
   return msg;
 }
 
-// ── Run the full 3-round gauntlet ─────────────────────────────────────────────
-async function runWarfare(war) {
+// ── XP helper ─────────────────────────────────────────────────────────────────
+async function awardTeamXP(userId, roster) {
+  const results = await Promise.all(
+    roster
+      .filter(f => f.haremId)
+      .map(f => db.awardXP(userId, f.haremId, XP_WIN).catch(() => null)),
+  );
+  const levelUps = results.filter(r => r?.leveled);
+  return levelUps;
+}
+
+function levelUpLines(levelUps, roster) {
+  if (!levelUps.length) return '';
+  return '\n' + levelUps.map(r => {
+    const f = roster.find(x => x.haremId && x.level === r.oldLevel);
+    const name = f?.name ?? 'A character';
+    return `${LEVELUP_EMOJI} **${name}** leveled up! Lv **${r.oldLevel} → ${r.newLevel}**`;
+  }).join('\n');
+}
+
+// ── Gauntlet core (shared by PvP and Bot) ─────────────────────────────────────
+async function runGauntlet(war, aRoster, bRoster, aLabel, bLabel) {
   const channel = await _client.channels.fetch(war.channelId).catch(() => null);
 
-  const aTeam = war.challengerTeam; // [{row, fighter}]
-  const bTeam = war.opponentTeam;
+  const teamALines = aRoster.map((f, i) => `**${i + 1}.** ${TIER_EMOJI[f.tier]} ${f.name} ${LEVEL_EMOJI}Lv${f.level} ${TYPE_EMOJI[f.type]}`).join('\n');
+  const teamBLines = bRoster.map((f, i) => `**${i + 1}.** ${TIER_EMOJI[f.tier]} ${f.name} ${LEVEL_EMOJI}Lv${f.level} ${TYPE_EMOJI[f.type]}`).join('\n');
 
-  const aRoster = aTeam.map(e => e.fighter);
-  const bRoster = bTeam.map(e => e.fighter);
-
-  // Announce start
   if (channel) {
-    const teamALines = aRoster.map((f, i) => `**${i + 1}.** ${TIER_EMOJI[f.tier]} ${f.name} ${TYPE_EMOJI[f.type]}`).join('\n');
-    const teamBLines = bRoster.map((f, i) => `**${i + 1}.** ${TIER_EMOJI[f.tier]} ${f.name} ${TYPE_EMOJI[f.type]}`).join('\n');
     const startEmbed = new EmbedBuilder()
       .setColor(0xe84393)
       .setTitle('⚔️ 3v3 Warfare Begins!')
       .addFields(
-        { name: `<@${war.challengerId}> (${war.challengerStance})`, value: teamALines, inline: true },
-        { name: `<@${war.opponentId}> (${war.opponentStance})`, value: teamBLines, inline: true },
+        { name: aLabel, value: teamALines, inline: true },
+        { name: bLabel, value: teamBLines, inline: true },
       );
     await channel.send({ embeds: [startEmbed] }).catch(() => {});
   }
 
-  // Track kills and round results
-  // aScore = how many of B's fighters A killed (challenger's score)
-  // bScore = how many of A's fighters B killed (opponent's score)
   const roundSummary = [];
   let aScore = 0, bScore = 0;
-
-  // Gauntlet: survivors carry their HP into the next round
   let aIdx = 0, bIdx = 0;
   let survivingA = aRoster[0];
   let survivingB = bRoster[0];
@@ -197,24 +227,18 @@ async function runWarfare(war) {
       const rEmbed = new EmbedBuilder()
         .setColor(0xe84393)
         .setDescription(
-          `**Round ${roundNum}:** ${TIER_EMOJI[fA.tier]} ${fA.name} (${Math.round(fA.currentHp / fA.maxHp * 100)}% HP) ` +
-          `vs ${TIER_EMOJI[fB.tier]} ${fB.name} (${Math.round(fB.currentHp / fB.maxHp * 100)}% HP)`,
+          `**Round ${roundNum}:** ${TIER_EMOJI[fA.tier]} ${fA.name} ${LEVEL_EMOJI}Lv${fA.level} (${Math.round(fA.currentHp / fA.maxHp * 100)}% HP) ` +
+          `vs ${TIER_EMOJI[fB.tier]} ${fB.name} ${LEVEL_EMOJI}Lv${fB.level} (${Math.round(fB.currentHp / fB.maxHp * 100)}% HP)`,
         );
       await channel.send({ embeds: [rEmbed] }).catch(() => {});
     }
 
     const { winner, log } = resolveDuel(fA, fB);
     await animateRound(fA, fB, log, war.channelId, roundNum);
-
     await sleep(600);
 
-    roundSummary.push({
-      round: roundNum,
-      winner: winner,
-      aFighter: fA.name, bFighter: fB.name,
-    });
+    roundSummary.push({ round: roundNum, winner, aFighter: fA.name, bFighter: fB.name });
 
-    // Determine whether this round ends the match BEFORE incrementing indices
     const winFighter  = winner === 'A' ? fA : fB;
     const isMatchOver = (winner === 'A' && bIdx === 2) || (winner === 'B' && aIdx === 2);
 
@@ -225,56 +249,59 @@ async function runWarfare(war) {
           isMatchOver
             ? `**Round ${roundNum} — Match Over!** 🏆 ${TIER_EMOJI[winFighter.tier]} **${winFighter.name}** lands the final blow!`
             : `**Round ${roundNum} over!** 🏆 ${TIER_EMOJI[winFighter.tier]} **${winFighter.name}** wins!\n` +
-              `(${winFighter.currentHp}/${winFighter.maxHp} HP remaining — advancing to next round)`,
+              `(${winFighter.currentHp}/${winFighter.maxHp} HP remaining — advancing)`,
         );
       await channel.send({ embeds: [roundEmbed] }).catch(() => {});
     }
 
-    if (winner === 'A') {
-      // A killed a B fighter — A's score goes up, move to next B fighter
-      aScore++;
-      bIdx++;
-      if (bIdx < 3) survivingB = bRoster[bIdx];
-      // survivingA keeps current HP (carry-over)
-    } else {
-      // B killed an A fighter — B's score goes up, move to next A fighter
-      bScore++;
-      aIdx++;
-      if (aIdx < 3) survivingA = aRoster[aIdx];
-    }
-
+    if (winner === 'A') { aScore++; bIdx++; if (bIdx < 3) survivingB = bRoster[bIdx]; }
+    else                { bScore++; aIdx++; if (aIdx < 3) survivingA = aRoster[aIdx]; }
     roundNum++;
-    if (roundNum > 6) break; // safety cap
+    if (roundNum > 6) break;
   }
 
-  // Determine overall winner: more KOs wins; tie goes to challenger
+  return { aScore, bScore, roundSummary, roundNum };
+}
+
+// ── PvP warfare runner ────────────────────────────────────────────────────────
+async function runWarfare(war) {
+  const aTeam   = war.challengerTeam;
+  const bTeam   = war.opponentTeam;
+  const aRoster = aTeam.map(e => e.fighter);
+  const bRoster = bTeam.map(e => e.fighter);
+
+  const aLabel = `<@${war.challengerId}> (${war.challengerStance})`;
+  const bLabel = `<@${war.opponentId}> (${war.opponentStance})`;
+
+  const { aScore, bScore, roundSummary, roundNum } = await runGauntlet(war, aRoster, bRoster, aLabel, bLabel);
+
   const challengerWon = aScore >= bScore;
   const winnerId = challengerWon ? war.challengerId : war.opponentId;
   const loserId  = challengerWon ? war.opponentId   : war.challengerId;
+  const winnerRoster = challengerWon ? aRoster : bRoster;
+  const loserRoster  = challengerWon ? bRoster : aRoster;
+  const winnerKOs    = challengerWon ? aScore : bScore;
+  const loserKOs     = challengerWon ? bScore : aScore;
 
-  // Payout: sum of rewards for each fighter the winner killed
-  const winnerKills    = challengerWon ? aScore : bScore;
-  const killedRoster   = challengerWon ? bRoster : aRoster;
-  const killedFighters = killedRoster.slice(0, winnerKills);
+  const killedFighters = loserRoster.slice(0, winnerKOs);
   const payout = Math.max(
     CONSOLATION,
     killedFighters.reduce((sum, f) => sum + Math.round(BASE_REWARD * (TIER_REWARD_MULT[f.tier] ?? 1)), 0),
   );
 
-  const winnerKOs = challengerWon ? aScore : bScore;
-  const loserKOs  = challengerWon ? bScore : aScore;
-
-  await Promise.all([
+  const [, , levelUps] = await Promise.all([
     db.addBalance(winnerId, payout).catch(() => {}),
     db.addBalance(loserId, CONSOLATION).catch(() => {}),
+    awardTeamXP(winnerId, winnerRoster),
     db.logDuel(winnerId, loserId, 'warfare-team', 'warfare-team', roundNum - 1, payout).catch(() => {}),
   ]);
 
+  const channel = await _client.channels.fetch(war.channelId).catch(() => null);
   if (channel) {
     const winUser  = await _client.users.fetch(winnerId).catch(() => null);
     const loseUser = await _client.users.fetch(loserId).catch(() => null);
-    const summary = roundSummary.map(r =>
-      `**Round ${r.round}:** ${r.aFighter} vs ${r.bFighter} → **${r.winner === 'A' ? r.aFighter : r.bFighter}** wins`
+    const summary  = roundSummary.map(r =>
+      `**Round ${r.round}:** ${r.aFighter} vs ${r.bFighter} → **${r.winner === 'A' ? r.aFighter : r.bFighter}** wins`,
     ).join('\n');
 
     const finalEmbed = new EmbedBuilder()
@@ -284,8 +311,10 @@ async function runWarfare(war) {
         `**Winner:** <@${winnerId}> (${winnerKOs} KOs)\n` +
         `**Loser:** <@${loserId}> (${loserKOs} KOs)\n\n` +
         `🌸 **${winUser?.username ?? 'Winner'}** earns **${payout} Petals**!\n` +
-        `🌸 **${loseUser?.username ?? 'Loser'}** gets **${CONSOLATION} Petals** consolation.\n\n` +
-        `**Round recap:**\n${summary}`,
+        `🌸 **${loseUser?.username ?? 'Loser'}** gets **${CONSOLATION} Petals** consolation.\n` +
+        `⚡ **+${XP_WIN} XP** awarded to each winning fighter!` +
+        levelUpLines(levelUps, winnerRoster) +
+        `\n\n**Round recap:**\n${summary}`,
       );
     await channel.send({ embeds: [finalEmbed] }).catch(() => {});
   }
@@ -293,44 +322,87 @@ async function runWarfare(war) {
   cleanupWar(war.id);
 }
 
+// ── Bot warfare runner ────────────────────────────────────────────────────────
+async function runBotWarfare(war) {
+  const aRoster = war.challengerTeam.map(e => e.fighter);
+  const bRoster = war.botTeam;
+  const botStance = war.botStance;
+
+  const aLabel = `<@${war.challengerId}> (${war.challengerStance})`;
+  const bLabel = `${BOT_EMOJI} Bot (${botStance})`;
+
+  const { aScore, bScore, roundSummary, roundNum } = await runGauntlet(war, aRoster, bRoster, aLabel, bLabel);
+
+  const userWon      = aScore >= bScore;
+  const winnerRoster = userWon ? aRoster : bRoster;
+  const winnerKOs    = userWon ? aScore  : bScore;
+  const loserKOs     = userWon ? bScore  : aScore;
+
+  let levelUps = [];
+  if (userWon) levelUps = await awardTeamXP(war.challengerId, aRoster);
+
+  const channel = await _client.channels.fetch(war.channelId).catch(() => null);
+  if (channel) {
+    const summary = roundSummary.map(r =>
+      `**Round ${r.round}:** ${r.aFighter} vs ${r.bFighter} → **${r.winner === 'A' ? r.aFighter : r.bFighter}** wins`,
+    ).join('\n');
+
+    const finalEmbed = new EmbedBuilder()
+      .setColor(userWon ? 0xffd700 : 0xff4757)
+      .setTitle(userWon ? '🏆 You beat the bot team!' : `${BOT_EMOJI} Bot team wins!`)
+      .setDescription(
+        `**Your KOs:** ${loserKOs > winnerKOs ? winnerKOs : loserKOs} → **Bot KOs:** ${userWon ? loserKOs : winnerKOs}\n\n` +
+        (userWon
+          ? `⚡ **+${XP_WIN} XP** awarded to each of your fighters!` + levelUpLines(levelUps, aRoster)
+          : `No XP gained — better luck next time!`) +
+        `\n\n**Round recap:**\n${summary}`,
+      );
+    await channel.send({ embeds: [finalEmbed] }).catch(() => {});
+  }
+
+  cleanupWar(war.id);
+}
+
+// ── Cleanup ───────────────────────────────────────────────────────────────────
 function cleanupWar(warId) {
   const war = activeWars.get(warId);
   if (!war) return;
   userInWar.delete(war.challengerId);
-  userInWar.delete(war.opponentId);
+  if (war.opponentId && war.opponentId !== 'BOT') userInWar.delete(war.opponentId);
   activeWars.delete(warId);
 }
 
 async function checkReady(war) {
+  if (war.isBot) {
+    if (war.challengerTeam && war.challengerStance) {
+      war.challengerTeam = war.challengerTeam.map(row => createFighter(war.challengerId, row, war.challengerStance));
+      war.challengerTeam = war.challengerTeam.map(f => ({ fighter: f }));
+      war.status = 'battling';
+      await runBotWarfare(war);
+    }
+    return;
+  }
+
   const allSet = war.challengerTeam && war.opponentTeam && war.challengerStance && war.opponentStance;
   if (allSet) {
-    // Build fighters
-    war.challengerTeam = war.challengerTeam.map(row =>
-      createFighter(war.challengerId, row, war.challengerStance)
-    );
-    war.opponentTeam = war.opponentTeam.map(row =>
-      createFighter(war.opponentId, row, war.opponentStance)
-    );
-
-    // Convert arrays to {fighter} format for internal use
+    war.challengerTeam = war.challengerTeam.map(row => createFighter(war.challengerId, row, war.challengerStance));
+    war.opponentTeam   = war.opponentTeam.map(row   => createFighter(war.opponentId,   row, war.opponentStance));
     war.challengerTeam = war.challengerTeam.map(f => ({ fighter: f }));
-    war.opponentTeam   = war.opponentTeam.map(f => ({ fighter: f }));
-
+    war.opponentTeam   = war.opponentTeam.map(f   => ({ fighter: f }));
     war.status = 'battling';
     await runWarfare(war);
   }
 }
 
-// ── Public: start warfare ─────────────────────────────────────────────────────
+// ── Public: start PvP warfare ─────────────────────────────────────────────────
 async function startWarfare(message, opponent) {
   const challengerId = message.author.id;
   const opponentId   = opponent.id;
 
   if (challengerId === opponentId) return message.reply("🤣 You can't warfare yourself.");
-  if (opponent.bot) return message.reply("🤖 You can't warfare a bot.");
+  if (opponent.bot) return message.reply("🤖 Use `x!warfare bot` to fight a bot team!");
   if (userInWar.has(challengerId)) return message.reply("⚔️ You're already in a warfare match!");
   if (userInWar.has(opponentId)) return message.reply(`⚔️ **${opponent.username}** is already in a warfare match.`);
-  // Also check duel state (import not needed, checked by caller via userInDuel)
 
   const [challengerHarem, opponentHarem] = await Promise.all([
     db.getHarem(challengerId),
@@ -369,14 +441,12 @@ async function startWarfare(message, opponent) {
   const war = {
     id: warId, channelId: message.channel.id,
     challengerId, opponentId,
+    isBot: false,
     challengerHarem, opponentHarem,
     status: 'invite',
-    challengerTeamRows: null,  // raw harem rows
-    opponentTeamRows: null,
-    challengerTeam: null,      // converted to fighters when both ready
-    opponentTeam: null,
-    challengerStance: null,
-    opponentStance: null,
+    challengerTeamRows: null, opponentTeamRows: null,
+    challengerTeam: null, opponentTeam: null,
+    challengerStance: null, opponentStance: null,
     inviteDmMsg,
   };
 
@@ -395,6 +465,62 @@ async function startWarfare(message, opponent) {
       if (ch) ch.send(`⏰ Warfare between <@${challengerId}> and <@${opponentId}> expired.`).catch(() => {});
     }
   }, INVITE_TIMEOUT);
+}
+
+// ── Public: start bot warfare ─────────────────────────────────────────────────
+async function startBotWarfare(message) {
+  const userId = message.author.id;
+
+  if (userInWar.has(userId)) return message.reply("⚔️ You're already in a warfare match!");
+
+  const harem = await db.getHarem(userId);
+  if (harem.length < 3) return message.reply("💔 You need **at least 3 characters** in your harem for warfare.");
+
+  const warId = genId();
+
+  // Pre-build 3 bot fighters
+  const botLevel = computeBotLevel(harem);
+  const botRows  = await Promise.all([createBotRow(botLevel), createBotRow(botLevel), createBotRow(botLevel)]);
+  const botStances = ['Aggressive', 'Defensive', 'Balanced', 'Berserker'];
+  const botStance  = botStances[Math.floor(Math.random() * botStances.length)];
+  const botTeam    = botRows.map(row => createFighter('BOT', row, botStance));
+
+  const war = {
+    id: warId, channelId: message.channel.id,
+    challengerId: userId, opponentId: 'BOT',
+    isBot: true, botTeam, botStance,
+    challengerHarem: harem,
+    status: 'picking',
+    challengerTeamRows: null,
+    challengerTeam: null, opponentTeam: null,
+    challengerStance: null, opponentStance: null,
+  };
+
+  activeWars.set(warId, war);
+  userInWar.set(userId, warId);
+
+  const botLines = botTeam.map((f, i) =>
+    `**${i + 1}.** ${TIER_EMOJI[f.tier]} ${f.name} ${LEVEL_EMOJI}Lv${f.level} ${TYPE_EMOJI[f.type]}`,
+  ).join('\n');
+
+  await message.reply(
+    `${BOT_EMOJI} ${VS_EMOJI} **Bot Warfare!** The bot picked a team:\n${botLines}\n\nCheck your DMs to pick your fighters!`,
+  );
+
+  const ok = await sendTeamPicker(userId, warId, harem);
+  if (!ok) {
+    cleanupWar(warId);
+    return message.channel.send(`❌ Couldn't DM <@${userId}> — enable DMs from server members.`).catch(() => {});
+  }
+
+  setTimeout(async () => {
+    const w = activeWars.get(warId);
+    if (w && w.status === 'picking') {
+      cleanupWar(warId);
+      const ch = await _client.channels.fetch(war.channelId).catch(() => null);
+      if (ch) ch.send(`⏰ Bot warfare expired — you didn't pick in time.`).catch(() => {});
+    }
+  }, PICK_TIMEOUT);
 }
 
 // ── Interaction router ────────────────────────────────────────────────────────
@@ -448,8 +574,7 @@ async function handleDecline(interaction, warId) {
 }
 
 async function handlePick(interaction, customId) {
-  // war_pick_<warId>_<userId>
-  const parts = customId.split('_');
+  const parts  = customId.split('_');
   const warId  = parts[2];
   const userId = parts[3];
   const war    = activeWars.get(warId);
@@ -458,7 +583,7 @@ async function handlePick(interaction, customId) {
   if (interaction.user.id !== userId) return interaction.reply({ content: "Not for you.", ephemeral: true });
 
   const isChallenger = userId === war.challengerId;
-  const harem = isChallenger ? war.challengerHarem : war.opponentHarem;
+  const harem   = isChallenger ? war.challengerHarem : war.opponentHarem;
   const indices = interaction.values.map(v => parseInt(v, 10));
   const teamRows = indices.map(i => harem[i]).filter(Boolean);
 
@@ -469,7 +594,7 @@ async function handlePick(interaction, customId) {
 
   const preview = teamRows.map((r, i) => {
     const type = engine.getType(r.character_id);
-    return `**${i + 1}.** ${TIER_EMOJI[r.tier]} ${r.character_name} ${TYPE_EMOJI[type]}`;
+    return `**${i + 1}.** ${TIER_EMOJI[r.tier]} ${r.character_name} ${LEVEL_EMOJI}Lv${r.level || 1} ${TYPE_EMOJI[type]}`;
   }).join('\n');
 
   await interaction.update({ content: `✅ Team selected:\n${preview}\n\nNow pick your stance!`, components: [], embeds: [] }).catch(() => {});
@@ -477,7 +602,6 @@ async function handlePick(interaction, customId) {
 }
 
 async function handleStance(interaction, customId) {
-  // war_stance_<warId>_<userId>_<Stance>
   const parts  = customId.split('_');
   const warId  = parts[2];
   const userId = parts[3];
@@ -493,7 +617,7 @@ async function handleStance(interaction, customId) {
 
   if (isChallenger) {
     war.challengerStance = stance;
-    war.challengerTeam   = teamRows; // will be converted to fighters in checkReady
+    war.challengerTeam   = teamRows;
   } else {
     war.opponentStance = stance;
     war.opponentTeam   = teamRows;
@@ -503,4 +627,4 @@ async function handleStance(interaction, customId) {
   await checkReady(war);
 }
 
-module.exports = { init, startWarfare, handleInteraction, isUserInWar };
+module.exports = { init, startWarfare, startBotWarfare, handleInteraction, isUserInWar };

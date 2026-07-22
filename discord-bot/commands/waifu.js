@@ -15,6 +15,7 @@
 const { EmbedBuilder } = require('discord.js');
 const { getRandomCharacter } = require('../utils/anilist.js');
 const db = require('../utils/db.js');
+const { getType, TYPE_EMOJI } = require('../utils/battleEngine.js');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PULL_COST        = 20;
@@ -115,12 +116,14 @@ async function executeSingle(message) {
 
   const newBalance = await db.getBalance(userId);
 
+  const elemType = getType(character.id);
   const embed = new EmbedBuilder()
     .setColor(TIER_COLOR[character.tier.name] ?? 0xff85c0)
     .setTitle(`${character.tier.emoji} ${character.name}`)
     .setDescription(
       `**From:** ${character.source}\n` +
-      `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
+      `**Tier:** ${character.tier.emoji} ${character.tier.name}\n` +
+      `**Element:** ${TYPE_EMOJI[elemType]} ${elemType}\n\n` +
       `React with ${MARRY_EMOJI} within **60 seconds** to marry them!`,
     )
     .setFooter({ text: `🌸 ${newBalance} Petals remaining • ${PULL_COST} Petals per pull` })
@@ -255,12 +258,13 @@ async function executeTenPull(message) {
 
   const buildEmbed = (final = false) => {
     const lines = pulls.map((char, i) => {
-      const emoji  = SLOT_EMOJIS[i];
-      const status = claimStatus[i] === 'married' ? '✅'
+      const emoji   = SLOT_EMOJIS[i];
+      const elemT   = getType(char.id);
+      const status  = claimStatus[i] === 'married' ? '✅'
         : claimStatus[i] === 'full'  ? '🚫'
         : claimStatus[i] === 'dupe'  ? `🔁 (+${DUPE_COMPENSATION}🌸)`
         : final ? '💨' : '⬜';
-      return `${emoji} ${char.tier.emoji} **${char.name}** — *${char.source}*  ${status}`;
+      return `${emoji} ${char.tier.emoji} ${TYPE_EMOJI[elemT]} **${char.name}** — *${char.source}*  ${status}`;
     });
 
     const claimed  = claimStatus.filter(s => s === 'married').length;

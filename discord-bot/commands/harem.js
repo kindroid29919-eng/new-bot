@@ -1,7 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const db = require('../utils/db.js');
-
-const tierEmoji = { Legendary: '🌟', Epic: '💎', Rare: '🔥', Uncommon: '✨', Common: '⚪' };
+const { TIER_EMOJI, TYPE_EMOJI, LEVEL_EMOJI, getType } = require('../utils/battleEngine.js');
 
 async function execute(message) {
   const target = message.mentions.users.first() || message.author;
@@ -16,14 +15,18 @@ async function execute(message) {
     );
   }
 
-  const lines = rows.map((c, i) => `**${i + 1}.** ${tierEmoji[c.tier]} ${c.character_name} — *${c.source_title}*`);
+  const lines = rows.map((c, i) => {
+    const type = getType(c.character_id);
+    const lvl  = c.level || 1;
+    return `**${i + 1}.** ${TIER_EMOJI[c.tier]} ${TYPE_EMOJI[type]} ${LEVEL_EMOJI}**${lvl}** ${c.character_name} — *${c.source_title}*`;
+  });
 
   const embed = new EmbedBuilder()
     .setColor(0xff85c0)
     .setTitle(`💍 ${target.username}'s Harem (${rows.length}/${db.MAX_HAREM_SIZE})`)
     .setDescription(
       lines.join('\n') +
-        `\n\nUse \`x!view <number>\` to see a character's picture, or \`x!unmarry <number>\` to remove one.`,
+        `\n\nUse \`x!view <number>\` to see a character's details, or \`x!unmarry <number>\` to remove one.`,
     )
     .setTimestamp();
 

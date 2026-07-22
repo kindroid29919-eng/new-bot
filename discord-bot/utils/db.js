@@ -109,6 +109,10 @@ async function init() {
   // Prevent duplicate entries at DB level (one character per user)
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_harem_unique_char ON harem(user_id, character_id);`);
 
+  // Level system columns
+  await pool.query(`ALTER TABLE harem ADD COLUMN IF NOT EXISTS level INTEGER NOT NULL DEFAULT 1`);
+  await pool.query(`ALTER TABLE harem ADD COLUMN IF NOT EXISTS xp    INTEGER NOT NULL DEFAULT 0`);
+
   console.log('[db] schema ready (harem, waifu_pulls, waifu_pity, currency, duel_log, shop_purchases)');
 }
 
@@ -265,7 +269,7 @@ async function updateHaremImage(userId, characterId, imageUrl) {
 // x!harem line up with what x!view / x!unmarry expect.
 async function getHarem(userId) {
   const { rows } = await pool.query(
-    `SELECT id, character_id, character_name, source_title, image_url, tier, favourites, married_at
+    `SELECT id, character_id, character_name, source_title, image_url, tier, favourites, married_at, level, xp
      FROM harem WHERE user_id = $1
      ORDER BY
        CASE tier
@@ -279,6 +283,41 @@ async function getHarem(userId) {
     [userId],
   );
   return rows;
+}
+
+// ── Level / XP ─────────────────────────────────────────────────────────────
+const HAREM_MAX_LEVEL = 35;
+
+/**
+ * Award XP to a specific harem character. Handles multi-level-ups.
+ * Returns { leveled, oldLevel, newLevel } or null if character not found.
+ */
+async function awardXP(userId, haremId, xpGain) {
+  const { rows } = await pool.query(
+    'SELECT level, xp FROM harem WHERE user_id = $1 AND id = $2',
+    [userId, haremId],
+  );
+  if (!rows.length) return null;
+
+  let { level, xp } = rows[0];
+  if (level >= HAREM_MAX_LEVEL) return { leveled: false, oldLevel: level, newLevel: level };
+
+  xp += xpGain;
+  let leveled = false;
+  const oldLevel = level;
+
+  while (level < HAREM_MAX_LEVEL) {
+    const needed = level * 100;
+    if (xp >= needed) { xp -= needed; level++; leveled = true; }
+    else break;
+  }
+  if (level >= HAREM_MAX_LEVEL) { xp = 0; level = HAREM_MAX_LEVEL; }
+
+  await pool.query(
+    'UPDATE harem SET level = $1, xp = $2 WHERE user_id = $3 AND id = $4',
+    [level, xp, userId, haremId],
+  );
+  return { leveled, oldLevel, newLevel: level };
 }
 
 async function removeFromHarem(userId, haremRowId) {
@@ -473,4 +512,7 @@ module.exports = {
   // shop
   hasShopItem,
   recordShopPurchase,
+  // level / xp
+  awardXP,
+  HAREM_MAX_LEVEL,
 };

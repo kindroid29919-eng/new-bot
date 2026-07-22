@@ -77,11 +77,11 @@ query ($page: Int, $perPage: Int) {
 }`;
 
 function tierFor(favourites) {
-  if (favourites >= 50000) return { name: 'Legendary', emoji: '🌟' };
-  if (favourites >= 15000) return { name: 'Epic',      emoji: '💎' };
-  if (favourites >= 5000)  return { name: 'Rare',      emoji: '🔥' };
-  if (favourites >= 1000)  return { name: 'Uncommon',  emoji: '✨' };
-  return                          { name: 'Common',    emoji: '⚪' };
+  if (favourites >= 50000) return { name: 'Legendary', emoji: '<:legendary:1529541756050210937>' };
+  if (favourites >= 15000) return { name: 'Epic',      emoji: '<:epic:1529541878834528266>'      };
+  if (favourites >= 5000)  return { name: 'Rare',      emoji: '<:rare:1529541977865982176>'      };
+  if (favourites >= 1000)  return { name: 'Uncommon',  emoji: '<:uncommon:1529542086414831696>'  };
+  return                          { name: 'Common',    emoji: '<:common:1529542196129435838>'    };
 }
 
 const RARE_OR_BETTER  = new Set(['Rare', 'Epic', 'Legendary']);
