@@ -13,19 +13,20 @@ const tierColor = { Legendary: 0xffd700, Epic: 0xa855f7, Rare: 0xff4757, Uncommo
 // image, we search the local pool by name and, if found, write the URL back so
 // every subsequent view is served straight from the DB.
 
-let _localPool = null;
-function localPoolByName() {
-  if (_localPool) return _localPool;
+let _localPoolById   = null;
+let _localPoolByName = null;
+
+function loadLocalPool() {
+  if (_localPoolById) return;
   try {
-    const raw = fs.readFileSync(
-      path.join(__dirname, '..', 'data', 'legendary-local.json'), 'utf8',
-    );
+    const raw     = fs.readFileSync(path.join(__dirname, '..', 'data', 'legendary-local.json'), 'utf8');
     const entries = JSON.parse(raw);
-    _localPool = new Map(entries.map(e => [e.name.toLowerCase(), e.image]));
+    _localPoolById   = new Map(entries.map(e => [e.id,                   e.image]));
+    _localPoolByName = new Map(entries.map(e => [e.name.toLowerCase(),   e.image]));
   } catch {
-    _localPool = new Map();
+    _localPoolById   = new Map();
+    _localPoolByName = new Map();
   }
-  return _localPool;
 }
 
 async function execute(message, args) {
