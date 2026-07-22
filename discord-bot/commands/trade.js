@@ -16,11 +16,10 @@ const {
   ButtonStyle,
 } = require('discord.js');
 const db = require('../utils/db.js');
+const { TIER_EMOJI } = require('../utils/battleEngine.js');
 
 // Pending trades: tradeId → tradeState
 const pendingTrades = new Map();
-
-const TIER_EMOJI  = { Legendary: '🌟', Epic: '💎', Rare: '🔥', Uncommon: '✨', Common: '⚪' };
 const OFFER_TTL   = 60_000; // 60 s
 
 function genId() {

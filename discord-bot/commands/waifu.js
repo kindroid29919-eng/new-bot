@@ -15,7 +15,7 @@
 const { EmbedBuilder } = require('discord.js');
 const { getRandomCharacter } = require('../utils/anilist.js');
 const db = require('../utils/db.js');
-const { getType, TYPE_EMOJI } = require('../utils/battleEngine.js');
+const { getType, TYPE_EMOJI, TIER_EMOJI } = require('../utils/battleEngine.js');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PULL_COST        = 20;
@@ -119,10 +119,10 @@ async function executeSingle(message) {
   const elemType = getType(character.id);
   const embed = new EmbedBuilder()
     .setColor(TIER_COLOR[character.tier.name] ?? 0xff85c0)
-    .setTitle(`${character.tier.emoji} ${character.name}`)
+    .setTitle(`${TIER_EMOJI[character.tier.name]} ${character.name}`)
     .setDescription(
       `**From:** ${character.source}\n` +
-      `**Tier:** ${character.tier.emoji} ${character.tier.name}\n` +
+      `**Tier:** ${TIER_EMOJI[character.tier.name]} ${character.tier.name}\n` +
       `**Element:** ${TYPE_EMOJI[elemType]} ${elemType}\n\n` +
       `React with ${MARRY_EMOJI} within **60 seconds** to marry them!`,
     )
@@ -149,7 +149,7 @@ async function executeSingle(message) {
         embeds: [EmbedBuilder.from(embed)
           .setDescription(
             `**From:** ${character.source}\n` +
-            `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
+            `**Tier:** ${TIER_EMOJI[character.tier.name]} ${character.tier.name}\n\n` +
             `🔁 You already have **${character.name}**! Received **${DUPE_COMPENSATION} 🌸 Petals** as compensation.`,
           )
           .setColor(0xf39c12)],
@@ -167,7 +167,7 @@ async function executeSingle(message) {
       embeds: [EmbedBuilder.from(embed)
         .setDescription(
           `**From:** ${character.source}\n` +
-          `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
+          `**Tier:** ${TIER_EMOJI[character.tier.name]} ${character.tier.name}\n\n` +
           `💍 Married to <@${userId}>! Check \`x!harem\` to see your collection.`,
         )
         .setColor(0x2ed573)],
@@ -180,7 +180,7 @@ async function executeSingle(message) {
         embeds: [EmbedBuilder.from(embed)
           .setDescription(
             `**From:** ${character.source}\n` +
-            `**Tier:** ${character.tier.emoji} ${character.tier.name}\n\n` +
+            `**Tier:** ${TIER_EMOJI[character.tier.name]} ${character.tier.name}\n\n` +
             `💨 ${character.name} got away — too slow!`,
           )
           .setColor(0x636e72)],
@@ -264,7 +264,7 @@ async function executeTenPull(message) {
         : claimStatus[i] === 'full'  ? '🚫'
         : claimStatus[i] === 'dupe'  ? `🔁 (+${DUPE_COMPENSATION}🌸)`
         : final ? '💨' : '⬜';
-      return `${emoji} ${char.tier.emoji} ${TYPE_EMOJI[elemT]} **${char.name}** — *${char.source}*  ${status}`;
+      return `${emoji} ${TIER_EMOJI[char.tier.name]} ${TYPE_EMOJI[elemT]} **${char.name}** — *${char.source}*  ${status}`;
     });
 
     const claimed  = claimStatus.filter(s => s === 'married').length;

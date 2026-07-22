@@ -12,6 +12,7 @@
 
 const { EmbedBuilder } = require('discord.js');
 const db = require('../utils/db.js');
+const { TIER_EMOJI } = require('../utils/battleEngine.js');
 
 const TIER_REFUND = {
   Legendary: 100,
@@ -21,9 +22,6 @@ const TIER_REFUND = {
   Common:     10,
 };
 
-const TIER_EMOJI = {
-  Legendary: '🌟', Epic: '💎', Rare: '🔥', Uncommon: '✨', Common: '⚪',
-};
 
 async function execute(message, args) {
   const index = parseInt(args[0], 10);
