@@ -218,6 +218,16 @@ function getLocalLegendaryCandidates(excludeIds) {
     }));
 }
 
+/**
+ * Returns a Set of all real AniList IDs present in the local legendary pool.
+ * These characters are managed exclusively through the local pool — they must
+ * never be returned by a normal AniList page fetch, even if they happen to
+ * appear on those pages at their real (non-Legendary) tier.
+ */
+function getLocalLegendaryIds() {
+  return new Set(loadLocalLegendary().map(c => c.id));
+}
+
 // ---------------------------------------------------------------------------
 
 async function fetchPage(page) {
@@ -330,6 +340,12 @@ async function getRandomCharacter(opts = {}, excludeIds = null, maxAttempts = 15
     requireRareOrBetter = false,
   } = opts;
 
+  // Characters in the local legendary pool are managed exclusively there.
+  // Even if they appear on AniList pages at their real (non-Legendary) tier,
+  // we must never return them from a normal API pull — they'd show at the
+  // wrong tier (Rare/Epic) and undercut the local pool logic.
+  const localLegendaryIds = getLocalLegendaryIds();
+
   // Determine search scope and acceptance filter (most → least restrictive)
   // `pageStops` is an escalation ladder: try the narrow, fast page range
   // first; if it comes up empty, widen the search before giving up. This
@@ -373,6 +389,7 @@ async function getRandomCharacter(opts = {}, excludeIds = null, maxAttempts = 15
       const candidates = raw
         .filter(c => c.gender === 'Female')
         .filter(c => (c.favourites ?? 0) >= MIN_FAVOURITES)
+        .filter(c => !localLegendaryIds.has(c.id))          // never from API — local pool only
         .filter(c => !excludeIds || !excludeIds.has(c.id))
         .map(toCharacter)
         .filter(tierFilter);

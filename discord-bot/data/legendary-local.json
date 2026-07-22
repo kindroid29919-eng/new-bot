@@ -1,34 +1,34 @@
 [
   {
-    "id": 900002,
+    "id": 195602,
     "name": "Mahiru Shiina",
-    "image": "",
+    "image": "https://s4.anilist.co/file/anilistcdn/character/large/b195602-Cc0vrUDl7r15.png",
     "source": "The Angel Next Door Spoils Me Rotten",
-    "favourites": 0,
+    "favourites": 50000,
     "mediaType": "ANIME"
   },
   {
-    "id": 900003,
+    "id": 70069,
     "name": "Kurumi Tokisaki",
-    "image": "",
+    "image": "https://s4.anilist.co/file/anilistcdn/character/large/b70069-DEV7X6o2L7oG.jpg",
     "source": "Date A Live",
-    "favourites": 0,
+    "favourites": 50000,
     "mediaType": "ANIME"
   },
   {
-    "id": 900004,
-    "name": "Alisa Mikhailovna Kujou",
-    "image": "",
+    "id": 217334,
+    "name": "Alisa Kujou",
+    "image": "https://s4.anilist.co/file/anilistcdn/character/large/b217334-buImnwO26SgS.jpg",
     "source": "Alya Sometimes Hides Her Feelings in Russian",
-    "favourites": 0,
+    "favourites": 50000,
     "mediaType": "ANIME"
   },
   {
-    "id": 900005,
-    "name": "Waguri Kaoruko",
-    "image": "",
+    "id": 268676,
+    "name": "Kaoruko Waguri",
+    "image": "https://s4.anilist.co/file/anilistcdn/character/large/b268676-aQmqvqj0DNoJ.png",
     "source": "The Fragrant Flower Blooms with Dignity",
-    "favourites": 0,
+    "favourites": 50000,
     "mediaType": "ANIME"
   },
   {
@@ -40,11 +40,11 @@
     "mediaType": "ANIME"
   },
   {
-    "id": 900007,
+    "id": 127222,
     "name": "Mai Sakurajima",
-    "image": "",
+    "image": "https://s4.anilist.co/file/anilistcdn/character/large/b127222-Jh5hhP7vZ7s1.png",
     "source": "Rascal Does Not Dream of Bunny Girl Senpai",
-    "favourites": 0,
+    "favourites": 50000,
     "mediaType": "ANIME"
   }
 ]
