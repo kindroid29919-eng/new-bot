@@ -32,7 +32,7 @@ function getTypeMultiplier(attackerType, defenderType) {
 
 // ── Tier stats ────────────────────────────────────────────────────────────────
 const TIER_BONUS = { Legendary: 150, Epic: 90, Rare: 50, Uncommon: 20, Common: 0 };
-const TIER_EMOJI = { Legendary: '🌟', Epic: '💎', Rare: '🔥', Uncommon: '✨', Common: '⚪' };
+const TIER_EMOJI = { Legendary: '<:legendary:1529541756050210937>', Epic: '<:epic:1529541878834528266>', Rare: '<:rare:1529541977865982176>', Uncommon: '<:uncommon:1529542086414831696>', Common: '<:common:1529542196129435838>' };
 const TIER_REWARD_MULT = { Legendary: 2.5, Epic: 2.0, Rare: 1.6, Uncommon: 1.3, Common: 1.0 };
 
 function getTierStats(tier) {
