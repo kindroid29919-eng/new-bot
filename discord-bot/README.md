@@ -1,6 +1,6 @@
-# 🚨 Expose Bot
+# 👑 Xoul
 
-A Discord bot with the `x!expose` command — pick a random expose message, drop it on anyone in your server, and watch the chaos unfold.
+A Discord gacha, battle, and economy bot — pull waifus, duel them, build your harem, and expose your friends.
 
 ---
 

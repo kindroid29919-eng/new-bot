@@ -1,7 +1,7 @@
 {
-  "name": "expose-bot",
+  "name": "xoul-bot",
   "version": "1.0.0",
-  "description": "A Discord bot with the x!expose prefix command.",
+  "description": "Xoul — a Discord gacha, battle, and economy bot.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -10,7 +10,9 @@
   "keywords": [
     "discord",
     "bot",
-    "expose",
+    "xoul",
+    "gacha",
+    "waifu",
     "discordjs"
   ],
   "author": "",

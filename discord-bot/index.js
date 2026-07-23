@@ -19,6 +19,7 @@ const { prefix, token } = require('./config/config');
 const db             = require('./utils/db');
 const duelEngine     = require('./utils/duelEngine');
 const warfareEngine  = require('./utils/warfareEngine');
+const slashHandler   = require('./utils/slashHandler');
 
 // ── Sanity-check the token ────────────────────────────────────────────────────
 if (!token) {
@@ -64,7 +65,18 @@ client.once('ready', async () => {
   console.log(`📦  Commands loaded: ${[...commands.keys()].join(', ')}`);
   if (aliasMap.size) console.log(`🔀  Aliases loaded: ${[...aliasMap.keys()].join(', ')}`);
 
-  client.user.setActivity(`${prefix}help | ${commands.size} commands`, { type: 3 /* Watching */ });
+  client.user.setActivity(`Xoul • ${prefix}help | ${commands.size} commands`, { type: 3 /* Watching */ });
+
+  // Set the bot avatar to the Xoul logo
+  try {
+    const logoPath = path.join(__dirname, 'assets', 'logo.png');
+    if (fs.existsSync(logoPath)) {
+      await client.user.setAvatar(fs.readFileSync(logoPath));
+      console.log('🎨 Set Xoul logo as bot avatar');
+    }
+  } catch (err) {
+    console.warn('[WARN] Could not set bot avatar:', err.message);
+  }
 
   // Give battle engines a reference to the client (needed for DMs, channel posts)
   duelEngine.init(client);
@@ -75,6 +87,13 @@ client.once('ready', async () => {
     await db.init();
   } catch (err) {
     console.error('[ERROR] Database init failed:', err.message);
+  }
+
+  // Deploy slash commands and start the top.gg webhook listener
+  try {
+    await slashHandler.init(client, commands);
+  } catch (err) {
+    console.error('[ERROR] Slash handler init failed:', err.message);
   }
 });
 
@@ -103,6 +122,11 @@ client.on('messageCreate', async (message) => {
 // ── Event: Button / Select-menu interactions ──────────────────────────────────
 // Routes duel and trade component interactions to the appropriate handlers.
 client.on('interactionCreate', async (interaction) => {
+  // Slash commands / context menus
+  if (interaction.isChatInputCommand()) {
+    return slashHandler.handle(interaction, commands);
+  }
+
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
 
   const { customId } = interaction;

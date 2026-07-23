@@ -5,6 +5,7 @@
  */
 
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const path = require('path');
 const { prefix } = require('../config/config');
 
 // Category metadata: Defines display names, emojis, styles, and order priority
@@ -36,12 +37,16 @@ async function execute(message, _args, commands) {
   });
 
   // 1. Build the Professional Landing (Home) Page Embed
+  const logoUrl = 'attachment://logo.png';
   const homeEmbed = new EmbedBuilder()
     .setColor(0x5865f2)
+    .setAuthor({ name: 'Xoul', iconURL: logoUrl })
     .setTitle('📖  Help Center')
+    .setThumbnail(logoUrl)
     .setDescription(
-      `Welcome to the command dashboard! Click the interactive buttons below to browse through my commands by category.\n\n` +
+      `Welcome to Xoul's command dashboard! Click the interactive buttons below to browse through my commands by category.\n\n` +
       `• **Prefix:** \`${prefix}\`\n` +
+      `• **Slash:** Type \`/\` to see Xoul's slash commands, or use \`/x command:<name>\`.\n` +
       `• **Usage:** \`${prefix}help\` to open this menu.`
     )
     .addFields({
@@ -117,10 +122,12 @@ async function execute(message, _args, commands) {
     return embed;
   };
 
-  // Send the initial menu frame
+  // Send the initial menu frame (attach the Xoul logo for the embed thumbnail)
+  const logoPath = path.join(__dirname, '..', 'assets', 'logo.png');
   const response = await message.reply({
     embeds: [homeEmbed],
     components: generateComponents(false),
+    files: [{ attachment: logoPath, name: 'logo.png' }],
   });
 
   // 4. Set up an efficient Message Component Collector (60s timer)

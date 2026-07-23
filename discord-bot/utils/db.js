@@ -120,7 +120,19 @@ async function init() {
   // Pull tier logging (for achievements)
   await pool.query(`ALTER TABLE waifu_pulls ADD COLUMN IF NOT EXISTS tier TEXT`);
 
-  console.log('[db] schema ready (harem, waifu_pulls, waifu_pity, currency, duel_log, shop_purchases)');
+  // Vote rewards table (top.gg / discordbotlist)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS votes (
+      id         SERIAL PRIMARY KEY,
+      user_id    TEXT NOT NULL,
+      reward     INTEGER NOT NULL DEFAULT 250,
+      voted_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      claimed_at TIMESTAMPTZ
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_votes_user_claimed ON votes(user_id, claimed_at, voted_at);`);
+
+  console.log('[db] schema ready (harem, waifu_pulls, waifu_pity, currency, duel_log, shop_purchases, votes)');
 }
 
 // ── Rate limiting (kept for backwards compat, no longer used for waifu) ────
@@ -596,6 +608,46 @@ async function getHaremTierCounts(userId) {
   return Object.fromEntries(rows.map(r => [r.tier, r.count]));
 }
 
+// ── Vote rewards ──────────────────────────────────────────────────────────────
+const VOTE_REWARD = 250;
+const VOTE_COOLDOWN_HOURS = 12;
+
+async function recordVote(userId, reward = VOTE_REWARD) {
+  await pool.query(
+    'INSERT INTO votes (user_id, reward) VALUES ($1, $2)',
+    [userId, reward],
+  );
+}
+
+// Returns { reward } on success, or { error: 'no_vote' | 'cooldown', hoursLeft? }
+async function claimVoteReward(userId) {
+  const { rows: unclaimed } = await pool.query(
+    `SELECT id, reward, voted_at FROM votes
+     WHERE user_id = $1 AND claimed_at IS NULL AND voted_at > now() - interval '${VOTE_COOLDOWN_HOURS} hours'
+     ORDER BY voted_at DESC LIMIT 1`,
+    [userId],
+  );
+  if (unclaimed.length) {
+    await pool.query('UPDATE votes SET claimed_at = now() WHERE id = $1', [unclaimed[0].id]);
+    await addBalance(userId, unclaimed[0].reward);
+    return { reward: unclaimed[0].reward };
+  }
+
+  const { rows: recent } = await pool.query(
+    `SELECT voted_at FROM votes
+     WHERE user_id = $1 AND voted_at > now() - interval '${VOTE_COOLDOWN_HOURS} hours'
+     ORDER BY voted_at DESC LIMIT 1`,
+    [userId],
+  );
+  if (recent.length) {
+    const msLeft = new Date(recent[0].voted_at).getTime() + VOTE_COOLDOWN_HOURS * 3_600_000 - Date.now();
+    const hoursLeft = Math.max(0, Math.ceil(msLeft / 3_600_000));
+    return { error: 'cooldown', hoursLeft };
+  }
+
+  return { error: 'no_vote' };
+}
+
 // ── Shop ───────────────────────────────────────────────────────────────────
 /** Returns true if the user has already purchased this shop item. */
 async function hasShopItem(userId, shopItemId) {
@@ -674,6 +726,11 @@ module.exports = {
   // shop
   hasShopItem,
   recordShopPurchase,
+  // vote rewards
+  recordVote,
+  claimVoteReward,
+  VOTE_REWARD,
+  VOTE_COOLDOWN_HOURS,
   // level / xp
   awardXP,
   HAREM_MAX_LEVEL,

@@ -6,7 +6,7 @@ const fs   = require('fs');
 const path = require('path');
 
 const ANILIST_URL = 'https://graphql.anilist.co';
-const USER_AGENT  = 'Expose-Bot (ahadsg26@gmail.com)';
+const USER_AGENT  = 'Xoul-Bot (ahadsg26@gmail.com)';
 
 const POOL_SIZE = 4000;
 const PER_PAGE  = 25;
