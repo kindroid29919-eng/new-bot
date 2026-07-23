@@ -20,7 +20,7 @@ const { drawBattleFrame } = require('./battleCanvas.js');
 const { getRandomCharacter } = require('./anilist.js');
 
 const {
-  TYPE_EMOJI, TIER_EMOJI, TIER_REWARD_MULT,
+  TYPE_EMOJI, TIER_EMOJI, TIER_REWARD_MULT, parseCustomEmoji,
   LEVEL_EMOJI, LEVELUP_EMOJI, BOT_EMOJI, VS_EMOJI,
   createFighter, resolveDuel,
 } = engine;
@@ -92,7 +92,8 @@ async function sendTeamPicker(userId, warId, harem) {
     const level = row.level || 1;
     return {
       label:       `${i + 1}. ${row.character_name}`.slice(0, 100),
-      description: `${TIER_EMOJI[row.tier]} ${row.tier} ${LEVEL_EMOJI}Lv${level} | ${TYPE_EMOJI[type]} ${type}`.slice(0, 100),
+      emoji:       parseCustomEmoji(TIER_EMOJI[row.tier]),
+      description: `${row.tier} | Lv ${level} | ${type}`.slice(0, 100),
       value:       String(i),
     };
   });

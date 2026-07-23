@@ -108,10 +108,10 @@ async function executeSingle(message) {
     return message.reply("⚠️ Couldn't reach the character database — your Petals were refunded. Try again in a bit.");
   }
 
-  // Persist updated pity + log pull
+  // Persist updated pity + log pull (with tier for achievements)
   await Promise.all([
     db.setPityState(userId, pityState),
-    db.logPull(userId),
+    db.logPull(userId, character.tier.name),
   ]);
 
   const newBalance = await db.getBalance(userId);
@@ -236,8 +236,8 @@ async function executeTenPull(message) {
     }
   }
 
-  // Persist updated pity + log all successful pulls
-  const logOps = pulls.map(() => db.logPull(userId));
+  // Persist updated pity + log all successful pulls (with tier for achievements)
+  const logOps = pulls.map(c => db.logPull(userId, c.tier.name));
   await Promise.all([db.setPityState(userId, pityState), ...logOps]);
 
   if (refundPulls) {

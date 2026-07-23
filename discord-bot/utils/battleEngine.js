@@ -85,6 +85,17 @@ const TIER_EMOJI = {
 };
 const TIER_REWARD_MULT = { Legendary: 2.5, Epic: 2.0, Rare: 1.6, Uncommon: 1.3, Common: 1.0 };
 
+/**
+ * Convert a Discord emoji string (`<:name:id>` or `<a:name:id>`) into the
+ * object format required by discord.js components (e.g. select-menu options).
+ * Falls back to `{ name: str }` for plain Unicode emojis or unknown input.
+ */
+function parseCustomEmoji(str) {
+  const match = String(str).match(/^<(a?):([a-zA-Z0-9_]+):(\d+)>$/);
+  if (!match) return { name: str };
+  return { animated: match[1] === 'a', name: match[2], id: match[3] };
+}
+
 function getTierStats(tier) {
   const bonus = TIER_BONUS[tier] ?? 0;
   return {
@@ -379,6 +390,7 @@ module.exports = {
   WIN_EMOJI,
   LOSE_EMOJI,
   TIER_EMOJI,
+  parseCustomEmoji,
   TIER_REWARD_MULT,
   ENERGY_MAX,
   MAX_TURNS,

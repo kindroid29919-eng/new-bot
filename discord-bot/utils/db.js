@@ -113,6 +113,13 @@ async function init() {
   await pool.query(`ALTER TABLE harem ADD COLUMN IF NOT EXISTS level INTEGER NOT NULL DEFAULT 1`);
   await pool.query(`ALTER TABLE harem ADD COLUMN IF NOT EXISTS xp    INTEGER NOT NULL DEFAULT 0`);
 
+  // Weekly reward columns
+  await pool.query(`ALTER TABLE currency ADD COLUMN IF NOT EXISTS weekly_streak INTEGER NOT NULL DEFAULT 0`);
+  await pool.query(`ALTER TABLE currency ADD COLUMN IF NOT EXISTS last_weekly  TIMESTAMPTZ`);
+
+  // Pull tier logging (for achievements)
+  await pool.query(`ALTER TABLE waifu_pulls ADD COLUMN IF NOT EXISTS tier TEXT`);
+
   console.log('[db] schema ready (harem, waifu_pulls, waifu_pity, currency, duel_log, shop_purchases)');
 }
 
@@ -126,8 +133,11 @@ async function pullsInLastHour(userId) {
   return rows[0].count;
 }
 
-async function logPull(userId) {
-  await pool.query('INSERT INTO waifu_pulls (user_id) VALUES ($1)', [userId]);
+async function logPull(userId, tier = null) {
+  await pool.query(
+    'INSERT INTO waifu_pulls (user_id, tier) VALUES ($1, $2)',
+    [userId, tier],
+  );
 }
 
 async function minutesUntilNextSlot(userId) {
@@ -447,6 +457,145 @@ async function claimDaily(userId) {
   return { alreadyClaimed: false, petals, newStreak };
 }
 
+// ── Weekly claim ───────────────────────────────────────────────────────────
+const WEEKLY_BASE = 500;
+const WEEKLY_STREAK_BONUS = 50;
+const WEEKLY_STREAK_RESET_HOURS = 336; // miss >7 days → reset
+
+async function getWeeklyInfo(userId) {
+  const { rows } = await pool.query(
+    `SELECT balance, weekly_streak, last_weekly FROM currency WHERE user_id = $1`,
+    [userId],
+  );
+  return rows[0] ?? { balance: 0, weekly_streak: 0, last_weekly: null };
+}
+
+// Returns { petals, newStreak, alreadyClaimed, hoursLeft }
+async function claimWeekly(userId) {
+  const info = await getWeeklyInfo(userId);
+  const now = Date.now();
+
+  if (info.last_weekly) {
+    const lastMs = new Date(info.last_weekly).getTime();
+    const hoursSince = (now - lastMs) / 3_600_000;
+
+    if (hoursSince < 24 * 7) {
+      const hoursLeft = Math.ceil(24 * 7 - hoursSince);
+      return { alreadyClaimed: true, hoursLeft };
+    }
+
+    var newStreak = hoursSince > WEEKLY_STREAK_RESET_HOURS ? 1 : info.weekly_streak + 1;
+  } else {
+    var newStreak = 1;
+  }
+
+  const petals = WEEKLY_BASE + (newStreak - 1) * WEEKLY_STREAK_BONUS;
+
+  await pool.query(
+    `INSERT INTO currency (user_id, balance, weekly_streak, last_weekly)
+       VALUES ($1, $2, $3, now())
+     ON CONFLICT (user_id) DO UPDATE
+       SET balance        = currency.balance + $2,
+           weekly_streak  = $3,
+           last_weekly    = now()`,
+    [userId, petals, newStreak],
+  );
+
+  return { alreadyClaimed: false, petals, newStreak };
+}
+
+// ── Leaderboards ────────────────────────────────────────────────────────────
+async function leaderboardByBalance(limit, userIds = null) {
+  const filter = userIds?.length ? 'WHERE user_id = ANY($2::text[])' : '';
+  const params = userIds?.length ? [limit, userIds] : [limit];
+  const { rows } = await pool.query(
+    `SELECT user_id, balance FROM currency ${filter} ORDER BY balance DESC LIMIT $1`,
+    params,
+  );
+  return rows;
+}
+
+async function leaderboardByHarem(limit, userIds = null) {
+  const filter = userIds?.length ? 'WHERE user_id = ANY($2::text[])' : '';
+  const params = userIds?.length ? [limit, userIds] : [limit];
+  const { rows } = await pool.query(
+    `SELECT user_id, COUNT(*)::int AS count FROM harem ${filter} GROUP BY user_id ORDER BY count DESC LIMIT $1`,
+    params,
+  );
+  return rows;
+}
+
+async function leaderboardByDuelWins(limit, userIds = null) {
+  const filter = userIds?.length ? 'AND winner_id = ANY($2::text[])' : '';
+  const params = userIds?.length ? [limit, userIds] : [limit];
+  const { rows } = await pool.query(
+    `SELECT winner_id AS user_id, COUNT(*)::int AS wins FROM duel_log
+     WHERE winner_char != 'warfare-team' ${filter}
+     GROUP BY winner_id ORDER BY wins DESC LIMIT $1`,
+    params,
+  );
+  return rows;
+}
+
+async function leaderboardByWarfareWins(limit, userIds = null) {
+  const filter = userIds?.length ? 'AND winner_id = ANY($2::text[])' : '';
+  const params = userIds?.length ? [limit, userIds] : [limit];
+  const { rows } = await pool.query(
+    `SELECT winner_id AS user_id, COUNT(*)::int AS wins FROM duel_log
+     WHERE winner_char = 'warfare-team' ${filter}
+     GROUP BY winner_id ORDER BY wins DESC LIMIT $1`,
+    params,
+  );
+  return rows;
+}
+
+async function leaderboardByPulls(limit, userIds = null) {
+  const filter = userIds?.length ? 'WHERE user_id = ANY($2::text[])' : '';
+  const params = userIds?.length ? [limit, userIds] : [limit];
+  const { rows } = await pool.query(
+    `SELECT user_id, COUNT(*)::int AS pulls FROM waifu_pulls ${filter} GROUP BY user_id ORDER BY pulls DESC LIMIT $1`,
+    params,
+  );
+  return rows;
+}
+
+// ── Achievement stats ───────────────────────────────────────────────────────
+async function getPullStats(userId) {
+  const total = await pool.query(
+    'SELECT COUNT(*)::int AS total FROM waifu_pulls WHERE user_id = $1',
+    [userId],
+  );
+  const byTier = await pool.query(
+    'SELECT tier, COUNT(*)::int AS count FROM waifu_pulls WHERE user_id = $1 AND tier IS NOT NULL GROUP BY tier',
+    [userId],
+  );
+  return { total: total.rows[0]?.total ?? 0, byTier: Object.fromEntries(byTier.rows.map(r => [r.tier, r.count])) };
+}
+
+async function getDuelWinCount(userId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS wins FROM duel_log WHERE winner_id = $1 AND winner_char != 'warfare-team'`,
+    [userId],
+  );
+  return rows[0]?.wins ?? 0;
+}
+
+async function getWarfareWinCount(userId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS wins FROM duel_log WHERE winner_id = $1 AND winner_char = 'warfare-team'`,
+    [userId],
+  );
+  return rows[0]?.wins ?? 0;
+}
+
+async function getHaremTierCounts(userId) {
+  const { rows } = await pool.query(
+    'SELECT tier, COUNT(*)::int AS count FROM harem WHERE user_id = $1 GROUP BY tier',
+    [userId],
+  );
+  return Object.fromEntries(rows.map(r => [r.tier, r.count]));
+}
+
 // ── Shop ───────────────────────────────────────────────────────────────────
 /** Returns true if the user has already purchased this shop item. */
 async function hasShopItem(userId, shopItemId) {
@@ -507,6 +656,19 @@ module.exports = {
   claimDaily,
   DAILY_BASE,
   DAILY_STREAK_BONUS,
+  claimWeekly,
+  WEEKLY_BASE,
+  WEEKLY_STREAK_BONUS,
+  // leaderboards / achievement stats
+  leaderboardByBalance,
+  leaderboardByHarem,
+  leaderboardByDuelWins,
+  leaderboardByWarfareWins,
+  leaderboardByPulls,
+  getPullStats,
+  getDuelWinCount,
+  getWarfareWinCount,
+  getHaremTierCounts,
   // duel
   logDuel,
   // shop
