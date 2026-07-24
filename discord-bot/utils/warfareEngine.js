@@ -9,6 +9,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+const path = require('path');
 const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, EmbedBuilder, AttachmentBuilder,
@@ -18,6 +19,8 @@ const db     = require('./db.js');
 const engine = require('./battleEngine.js');
 const { drawBattleFrame } = require('./battleCanvas.js');
 const { getRandomCharacter } = require('./anilist.js');
+
+const BOT_LOGO_PATH = path.join(__dirname, '..', 'assets', 'logo.png');
 
 const {
   TYPE_EMOJI, TIER_EMOJI, TIER_REWARD_MULT, parseCustomEmoji,
@@ -67,13 +70,13 @@ async function createBotRow(level, minTier = 'Common') {
   if (char && tierRank(char.tier.name) >= minRank) {
     return {
       id: null, character_id: char.id, character_name: char.name,
-      source_title: char.source, image_url: char.image,
+      source_title: char.source, image_url: BOT_LOGO_PATH,
       tier: char.tier.name, level,
     };
   }
   return {
     id: null, character_id: 100000 + Math.floor(Math.random() * 800000),
-    character_name: `${minTier} Bot Fighter`, source_title: 'System', image_url: null,
+    character_name: `${minTier} Bot Fighter`, source_title: 'System', image_url: BOT_LOGO_PATH,
     tier: minTier, level,
   };
 }
@@ -186,12 +189,13 @@ async function animateRound(fA, fB, log, channelId, roundNum) {
 }
 
 // ── XP helper ─────────────────────────────────────────────────────────────────
-async function awardTeamXP(userId, records) {
+async function awardTeamXP(userId, records, multiplier = 1) {
   const results = await Promise.all(
     records
       .filter(r => r.fought && r.fighter.haremId)
       .map(async r => {
-        const res = await db.awardXP(userId, r.fighter.haremId, r.xp).catch(() => null);
+        const xp = Math.max(1, Math.min(engine.MAX_XP, Math.round(r.xp * multiplier)));
+        const res = await db.awardXP(userId, r.fighter.haremId, xp).catch(() => null);
         if (res?.leveled) return { ...res, name: r.fighter.name };
         return res;
       }),
@@ -199,8 +203,10 @@ async function awardTeamXP(userId, records) {
   return results.filter(r => r?.leveled);
 }
 
-function totalFoughtXp(records) {
-  return records.filter(r => r.fought).reduce((sum, r) => sum + r.xp, 0);
+function totalFoughtXp(records, multiplier = 1) {
+  return records
+    .filter(r => r.fought)
+    .reduce((sum, r) => sum + Math.max(1, Math.min(engine.MAX_XP, Math.round(r.xp * multiplier))), 0);
 }
 
 function levelUpLines(levelUps) {
@@ -333,8 +339,8 @@ async function runWarfare(war) {
   );
 
   const [winnerLevelUps, loserLevelUps] = await Promise.all([
-    awardTeamXP(winnerId, winnerRecords),
-    awardTeamXP(loserId, loserRecords),
+    awardTeamXP(winnerId, winnerRecords, 1),
+    awardTeamXP(loserId, loserRecords, 0.5),
     db.addBalance(winnerId, payout).catch(() => {}),
     db.addBalance(loserId, CONSOLATION).catch(() => {}),
     db.logDuel(winnerId, loserId, 'warfare-team', 'warfare-team', roundNum - 1, payout).catch(() => {}),
@@ -356,9 +362,9 @@ async function runWarfare(war) {
         `**Loser:** <@${loserId}> (${loserKOs} KOs)\n\n` +
         `🌸 **${winUser?.username ?? 'Winner'}** earns **${payout} Petals**!\n` +
         `🌸 **${loseUser?.username ?? 'Loser'}** gets **${CONSOLATION} Petals** consolation.\n` +
-        `⚡ **Winning fighters earned ${totalFoughtXp(winnerRecords)} XP!**` +
+        `⚡ **Winning fighters earned ${totalFoughtXp(winnerRecords, 1)} XP!**` +
         levelUpLines(winnerLevelUps) +
-        `\n⚡ **Losing fighters earned ${totalFoughtXp(loserRecords)} XP!**` +
+        `\n⚡ **Losing fighters earned ${totalFoughtXp(loserRecords, 0.5)} XP!**` +
         levelUpLines(loserLevelUps) +
         `\n\n**Round recap:**\n${summary}`,
       );
@@ -382,9 +388,10 @@ async function runBotWarfare(war) {
   const userWon      = aScore >= bScore;
   const winnerKOs    = userWon ? aScore  : bScore;
   const loserKOs     = userWon ? bScore  : aScore;
-  const userTotalXp  = totalFoughtXp(aRecords);
+  const userMultiplier = userWon ? 1 : 0.5;
+  const userTotalXp  = totalFoughtXp(aRecords, userMultiplier);
 
-  const levelUps = await awardTeamXP(war.challengerId, aRecords);
+  const levelUps = await awardTeamXP(war.challengerId, aRecords, userMultiplier);
 
   const channel = await _client.channels.fetch(war.channelId).catch(() => null);
   if (channel) {

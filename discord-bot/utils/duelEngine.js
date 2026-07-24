@@ -9,6 +9,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+const path = require('path');
 const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, EmbedBuilder, AttachmentBuilder,
@@ -18,6 +19,8 @@ const db     = require('./db.js');
 const engine = require('./battleEngine.js');
 const { drawBattleFrame } = require('./battleCanvas.js');
 const { getRandomCharacter } = require('./anilist.js');
+
+const BOT_LOGO_PATH = path.join(__dirname, '..', 'assets', 'logo.png');
 
 const {
   TYPE_EMOJI, TIER_EMOJI, TIER_REWARD_MULT, parseCustomEmoji,
@@ -69,14 +72,14 @@ async function createBotRow(level, minTier = 'Common') {
   if (char && tierRank(char.tier.name) >= minRank) {
     return {
       id: null, character_id: char.id, character_name: char.name,
-      source_title: char.source, image_url: char.image,
+      source_title: char.source, image_url: BOT_LOGO_PATH,
       tier: char.tier.name, level,
     };
   }
   // Fallback
   return {
     id: null, character_id: 100000 + Math.floor(Math.random() * 800000),
-    character_name: `${minTier} Bot Challenger`, source_title: 'System', image_url: null,
+    character_name: `${minTier} Bot Challenger`, source_title: 'System', image_url: BOT_LOGO_PATH,
     tier: minTier, level,
   };
 }
@@ -247,7 +250,7 @@ async function runBattle(duel) {
   const payout = Math.round(BASE_REWARD * mult);
 
   const winnerXp = engine.xpForOpponent(winnerFtr, loserFtr);
-  const loserXp  = Math.round(engine.xpForOpponent(loserFtr, winnerFtr) * 0.5);
+  const loserXp  = engine.participationXp(engine.xpForOpponent(loserFtr, winnerFtr));
 
   const [winXpResult, loseXpResult] = await Promise.all([
     tryAwardXP(winnerId, winnerFtr, winnerXp),
@@ -318,13 +321,13 @@ async function runBotBattle(duel) {
   }
 
   const fighterXp = engine.xpForOpponent(fA, fB);
-  const halfXp    = Math.round(fighterXp * 0.5);
+  const lossXp    = engine.participationXp(fighterXp);
   let xpResult = null;
   if (userWon) {
     xpResult = await tryAwardXP(duel.challengerId, fA, fighterXp);
     await db.addBalance(duel.challengerId, CONSOLATION).catch(() => {});
   } else {
-    xpResult = await tryAwardXP(duel.challengerId, fA, halfXp);
+    xpResult = await tryAwardXP(duel.challengerId, fA, lossXp);
   }
 
   if (channel) {
@@ -338,7 +341,7 @@ async function runBotBattle(duel) {
             `🌸 **+${CONSOLATION} Petals** consolation\n` +
             xpLine(xpResult, fA, fighterXp)
           : `${BOT_EMOJI} **Bot** won with ${TIER_EMOJI[fB.tier]} **${fB.name}**.\n` +
-            xpLine(xpResult, fA, halfXp),
+            xpLine(xpResult, fA, lossXp),
       )
       .addFields(
         { name: 'Turns',      value: `${log.length}`, inline: true },

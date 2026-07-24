@@ -113,8 +113,9 @@ const VS_EMOJI      = '<:vs:1529555070658543616>';
 
 const TIER_XP_BONUS = { Common: 0, Uncommon: 6, Rare: 12, Epic: 18, Legendary: 25 };
 const BASE_XP       = 10;
-const MAX_XP        = 80;
+const MAX_XP        = 30;
 const MIN_XP        = 5;
+const PARTICIPATION_MAX = 15;
 
 /** XP required to go from `level` to `level + 1`. */
 function xpToNextLevel(level) {
@@ -128,6 +129,11 @@ function xpForOpponent(winner, loser) {
   const underdog  = Math.max(0, (loser.level || 1) - (winner.level || 1)) * 2;
   const xp = Math.round(BASE_XP + tierBonus + levelPart + underdog);
   return Math.max(MIN_XP, Math.min(MAX_XP, xp));
+}
+
+/** Reduced XP for a loss/participation. */
+function participationXp(xp) {
+  return Math.max(1, Math.min(PARTICIPATION_MAX, Math.round(xp * 0.5)));
 }
 
 /**
@@ -421,8 +427,10 @@ module.exports = {
   createFighter,
   resolveDuel,
   xpForOpponent,
+  participationXp,
   TIER_XP_BONUS,
   BASE_XP,
   MAX_XP,
   MIN_XP,
+  PARTICIPATION_MAX,
 };
