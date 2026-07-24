@@ -111,9 +111,23 @@ const LEVELUP_EMOJI = '<:Level_UP:1529553553084121241>';
 const BOT_EMOJI     = '<:bot:1529554935891628093>';
 const VS_EMOJI      = '<:vs:1529555070658543616>';
 
+const TIER_XP_BONUS = { Common: 0, Uncommon: 6, Rare: 12, Epic: 18, Legendary: 25 };
+const BASE_XP       = 10;
+const MAX_XP        = 80;
+const MIN_XP        = 5;
+
 /** XP required to go from `level` to `level + 1`. */
 function xpToNextLevel(level) {
   return level * 100; // 100, 200, 300 … 3400
+}
+
+/** XP awarded to `winner` for defeating `loser`. Scales with opponent tier/level. */
+function xpForOpponent(winner, loser) {
+  const tierBonus = TIER_XP_BONUS[loser.tier] ?? 0;
+  const levelPart = (loser.level || 1) * 1.5;
+  const underdog  = Math.max(0, (loser.level || 1) - (winner.level || 1)) * 2;
+  const xp = Math.round(BASE_XP + tierBonus + levelPart + underdog);
+  return Math.max(MIN_XP, Math.min(MAX_XP, xp));
 }
 
 /**
@@ -406,4 +420,9 @@ module.exports = {
   xpToNextLevel,
   createFighter,
   resolveDuel,
+  xpForOpponent,
+  TIER_XP_BONUS,
+  BASE_XP,
+  MAX_XP,
+  MIN_XP,
 };

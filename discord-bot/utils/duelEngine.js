@@ -27,11 +27,13 @@ const {
 
 const BASE_REWARD    = 50;
 const CONSOLATION    = 10;
-const XP_WIN_PVP     = 30;
-const XP_WIN_BOT     = 20;
 const INVITE_TIMEOUT = 60_000;
 const PICK_TIMEOUT   = 90_000;
 const TURN_ANIM_MS   = 1_500;
+
+const TIER_ORDER = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
+const tierRank = tier => Math.max(0, TIER_ORDER.indexOf(tier));
+const bestTier = harem => harem.reduce((best, r) => tierRank(r.tier) > tierRank(best) ? r.tier : best, 'Common');
 
 const activeDuels = new Map();
 const userInDuel  = new Map();
@@ -47,16 +49,24 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function computeBotLevel(harem) {
-  if (!harem.length) return 5;
-  const avg    = Math.round(harem.reduce((s, r) => s + (r.level || 1), 0) / harem.length);
-  const offset = Math.floor(Math.random() * 11) - 5;
+  const sorted = [...harem].sort((a, b) => (b.level || 1) - (a.level || 1));
+  const top3   = sorted.slice(0, 3);
+  const avg    = top3.length
+    ? Math.round(top3.reduce((s, r) => s + (r.level || 1), 0) / top3.length)
+    : 5;
+  const offset = Math.floor(Math.random() * 6); // 0..5 stronger than your best
   return Math.max(1, Math.min(engine.MAX_LEVEL, avg + offset));
 }
 
-async function createBotRow(level) {
+async function createBotRow(level, minTier = 'Common') {
+  const minRank = tierRank(minTier);
+  let opts = {};
+  if (minRank >= 4) opts = { requireEpicOrBetter: true };
+  else if (minRank >= 3) opts = { requireRareOrBetter: true };
+
   let char = null;
-  try { char = await getRandomCharacter({}); } catch {}
-  if (char) {
+  try { char = await getRandomCharacter(opts); } catch {}
+  if (char && tierRank(char.tier.name) >= minRank) {
     return {
       id: null, character_id: char.id, character_name: char.name,
       source_title: char.source, image_url: char.image,
@@ -64,11 +74,10 @@ async function createBotRow(level) {
     };
   }
   // Fallback
-  const tiers = ['Common', 'Uncommon', 'Rare'];
   return {
     id: null, character_id: 100000 + Math.floor(Math.random() * 800000),
-    character_name: 'Bot Challenger', source_title: 'System', image_url: null,
-    tier: tiers[Math.floor(Math.random() * tiers.length)], level,
+    character_name: `${minTier} Bot Challenger`, source_title: 'System', image_url: null,
+    tier: minTier, level,
   };
 }
 
@@ -237,10 +246,14 @@ async function runBattle(duel) {
   const mult   = TIER_REWARD_MULT[loserFtr.tier] ?? 1;
   const payout = Math.round(BASE_REWARD * mult);
 
-  const [, , xpResult] = await Promise.all([
+  const winnerXp = engine.xpForOpponent(winnerFtr, loserFtr);
+  const loserXp  = Math.round(engine.xpForOpponent(loserFtr, winnerFtr) * 0.5);
+
+  const [winXpResult, loseXpResult] = await Promise.all([
+    tryAwardXP(winnerId, winnerFtr, winnerXp),
+    tryAwardXP(loserId,  loserFtr,  loserXp),
     db.addBalance(winnerId, payout).catch(() => {}),
     db.addBalance(loserId, CONSOLATION).catch(() => {}),
-    tryAwardXP(winnerId, winnerFtr, XP_WIN_PVP),
     db.logDuel(winnerId, loserId, winnerFtr.name, loserFtr.name, log.length, payout).catch(() => {}),
   ]);
 
@@ -255,7 +268,8 @@ async function runBattle(duel) {
         `**Loser:** <@${loserId}> with ${TIER_EMOJI[loserFtr.tier]} **${loserFtr.name}**\n\n` +
         `🌸 **${winnerUser?.username ?? 'Winner'}** earns **${payout} Petals**!\n` +
         `🌸 **${loserUser?.username ?? 'Loser'}** gets **${CONSOLATION} Petals** consolation.\n` +
-        xpLine(xpResult, winnerFtr, XP_WIN_PVP),
+        xpLine(winXpResult, winnerFtr, winnerXp) + '\n' +
+        xpLine(loseXpResult, loserFtr, loserXp),
       )
       .addFields(
         { name: 'Turns',          value: `${log.length}`,    inline: true },
@@ -303,10 +317,14 @@ async function runBotBattle(duel) {
     } catch {}
   }
 
+  const fighterXp = engine.xpForOpponent(fA, fB);
+  const halfXp    = Math.round(fighterXp * 0.5);
   let xpResult = null;
   if (userWon) {
-    xpResult = await tryAwardXP(duel.challengerId, fA, XP_WIN_BOT);
+    xpResult = await tryAwardXP(duel.challengerId, fA, fighterXp);
     await db.addBalance(duel.challengerId, CONSOLATION).catch(() => {});
+  } else {
+    xpResult = await tryAwardXP(duel.challengerId, fA, halfXp);
   }
 
   if (channel) {
@@ -318,9 +336,9 @@ async function runBotBattle(duel) {
         userWon
           ? `**${challengerUser?.username ?? 'You'}** won with ${TIER_EMOJI[fA.tier]} **${fA.name}**!\n` +
             `🌸 **+${CONSOLATION} Petals** consolation\n` +
-            xpLine(xpResult, fA, XP_WIN_BOT)
+            xpLine(xpResult, fA, fighterXp)
           : `${BOT_EMOJI} **Bot** won with ${TIER_EMOJI[fB.tier]} **${fB.name}**.\n` +
-            `No XP gained — better luck next time!`,
+            xpLine(xpResult, fA, halfXp),
       )
       .addFields(
         { name: 'Turns',      value: `${log.length}`, inline: true },
@@ -438,7 +456,8 @@ async function startBotDuel(message) {
   if (!harem.length) return message.reply("💔 You need at least one character in your harem. Use `x!waifu` first.");
 
   const botLevel = computeBotLevel(harem);
-  const botRow   = await createBotRow(botLevel);
+  const botTier  = bestTier(harem);
+  const botRow   = await createBotRow(botLevel, botTier);
   const botStance = STANCES[Math.floor(Math.random() * STANCES.length)];
   const botFighter = createFighter('BOT', botRow, botStance);
 

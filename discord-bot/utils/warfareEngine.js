@@ -27,10 +27,13 @@ const {
 
 const BASE_REWARD    = 50;
 const CONSOLATION    = 10;
-const XP_WIN         = 20; // per fighter in winning team
 const INVITE_TIMEOUT = 60_000;
 const PICK_TIMEOUT   = 120_000;
 const TURN_ANIM_MS   = 1_200;
+
+const TIER_ORDER = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
+const tierRank = tier => Math.max(0, TIER_ORDER.indexOf(tier));
+const bestTier = harem => harem.reduce((best, r) => tierRank(r.tier) > tierRank(best) ? r.tier : best, 'Common');
 
 const activeWars = new Map();
 const userInWar  = new Map();
@@ -44,27 +47,34 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function computeBotLevel(harem) {
-  if (!harem.length) return 5;
-  const avg    = Math.round(harem.reduce((s, r) => s + (r.level || 1), 0) / harem.length);
-  const offset = Math.floor(Math.random() * 11) - 5;
+  const sorted = [...harem].sort((a, b) => (b.level || 1) - (a.level || 1));
+  const top3   = sorted.slice(0, 3);
+  const avg    = top3.length
+    ? Math.round(top3.reduce((s, r) => s + (r.level || 1), 0) / top3.length)
+    : 5;
+  const offset = Math.floor(Math.random() * 6); // 0..5 stronger than your best
   return Math.max(1, Math.min(engine.MAX_LEVEL, avg + offset));
 }
 
-async function createBotRow(level) {
+async function createBotRow(level, minTier = 'Common') {
+  const minRank = tierRank(minTier);
+  let opts = {};
+  if (minRank >= 4) opts = { requireEpicOrBetter: true };
+  else if (minRank >= 3) opts = { requireRareOrBetter: true };
+
   let char = null;
-  try { char = await getRandomCharacter({}); } catch {}
-  if (char) {
+  try { char = await getRandomCharacter(opts); } catch {}
+  if (char && tierRank(char.tier.name) >= minRank) {
     return {
       id: null, character_id: char.id, character_name: char.name,
       source_title: char.source, image_url: char.image,
       tier: char.tier.name, level,
     };
   }
-  const tiers = ['Common', 'Uncommon', 'Rare'];
   return {
     id: null, character_id: 100000 + Math.floor(Math.random() * 800000),
-    character_name: 'Bot Fighter', source_title: 'System', image_url: null,
-    tier: tiers[Math.floor(Math.random() * tiers.length)], level,
+    character_name: `${minTier} Bot Fighter`, source_title: 'System', image_url: null,
+    tier: minTier, level,
   };
 }
 
@@ -176,21 +186,27 @@ async function animateRound(fA, fB, log, channelId, roundNum) {
 }
 
 // ── XP helper ─────────────────────────────────────────────────────────────────
-async function awardTeamXP(userId, roster) {
+async function awardTeamXP(userId, records) {
   const results = await Promise.all(
-    roster
-      .filter(f => f.haremId)
-      .map(f => db.awardXP(userId, f.haremId, XP_WIN).catch(() => null)),
+    records
+      .filter(r => r.fought && r.fighter.haremId)
+      .map(async r => {
+        const res = await db.awardXP(userId, r.fighter.haremId, r.xp).catch(() => null);
+        if (res?.leveled) return { ...res, name: r.fighter.name };
+        return res;
+      }),
   );
-  const levelUps = results.filter(r => r?.leveled);
-  return levelUps;
+  return results.filter(r => r?.leveled);
 }
 
-function levelUpLines(levelUps, roster) {
+function totalFoughtXp(records) {
+  return records.filter(r => r.fought).reduce((sum, r) => sum + r.xp, 0);
+}
+
+function levelUpLines(levelUps) {
   if (!levelUps.length) return '';
   return '\n' + levelUps.map(r => {
-    const f = roster.find(x => x.haremId && x.level === r.oldLevel);
-    const name = f?.name ?? 'A character';
+    const name = r.name ?? 'A character';
     return `${LEVELUP_EMOJI} **${name}** leveled up! Lv **${r.oldLevel} → ${r.newLevel}**`;
   }).join('\n');
 }
@@ -220,9 +236,14 @@ async function runGauntlet(war, aRoster, bRoster, aLabel, bLabel) {
   let survivingB = bRoster[0];
   let roundNum = 1;
 
+  const aRecords = aRoster.map(f => ({ fighter: f, fought: false, opponents: [], xp: 0 }));
+  const bRecords = bRoster.map(f => ({ fighter: f, fought: false, opponents: [], xp: 0 }));
+
   while (aIdx < 3 && bIdx < 3) {
     const fA = survivingA;
     const fB = survivingB;
+    aRecords[aIdx].fought = true;
+    bRecords[bIdx].fought = true;
 
     if (channel) {
       const rEmbed = new EmbedBuilder()
@@ -237,6 +258,9 @@ async function runGauntlet(war, aRoster, bRoster, aLabel, bLabel) {
     const { winner, log } = resolveDuel(fA, fB);
     await animateRound(fA, fB, log, war.channelId, roundNum);
     await sleep(600);
+
+    aRecords[aIdx].opponents.push(fB);
+    bRecords[bIdx].opponents.push(fA);
 
     roundSummary.push({ round: roundNum, winner, aFighter: fA.name, bFighter: fB.name });
 
@@ -261,7 +285,23 @@ async function runGauntlet(war, aRoster, bRoster, aLabel, bLabel) {
     if (roundNum > 6) break;
   }
 
-  return { aScore, bScore, roundSummary, roundNum };
+  // Compute dynamic XP only for fighters that actually fought
+  for (const rec of aRecords) {
+    if (!rec.fought) continue;
+    rec.xp = Math.min(
+      engine.MAX_XP,
+      rec.opponents.reduce((sum, opp) => sum + engine.xpForOpponent(rec.fighter, opp), 0),
+    );
+  }
+  for (const rec of bRecords) {
+    if (!rec.fought) continue;
+    rec.xp = Math.min(
+      engine.MAX_XP,
+      rec.opponents.reduce((sum, opp) => sum + engine.xpForOpponent(rec.fighter, opp), 0),
+    );
+  }
+
+  return { aScore, bScore, roundSummary, roundNum, aRecords, bRecords };
 }
 
 // ── PvP warfare runner ────────────────────────────────────────────────────────
@@ -274,11 +314,13 @@ async function runWarfare(war) {
   const aLabel = `<@${war.challengerId}> (${war.challengerStance})`;
   const bLabel = `<@${war.opponentId}> (${war.opponentStance})`;
 
-  const { aScore, bScore, roundSummary, roundNum } = await runGauntlet(war, aRoster, bRoster, aLabel, bLabel);
+  const { aScore, bScore, roundSummary, roundNum, aRecords, bRecords } = await runGauntlet(war, aRoster, bRoster, aLabel, bLabel);
 
   const challengerWon = aScore >= bScore;
   const winnerId = challengerWon ? war.challengerId : war.opponentId;
   const loserId  = challengerWon ? war.opponentId   : war.challengerId;
+  const winnerRecords = challengerWon ? aRecords : bRecords;
+  const loserRecords  = challengerWon ? bRecords : aRecords;
   const winnerRoster = challengerWon ? aRoster : bRoster;
   const loserRoster  = challengerWon ? bRoster : aRoster;
   const winnerKOs    = challengerWon ? aScore : bScore;
@@ -290,10 +332,11 @@ async function runWarfare(war) {
     killedFighters.reduce((sum, f) => sum + Math.round(BASE_REWARD * (TIER_REWARD_MULT[f.tier] ?? 1)), 0),
   );
 
-  const [, , levelUps] = await Promise.all([
+  const [winnerLevelUps, loserLevelUps] = await Promise.all([
+    awardTeamXP(winnerId, winnerRecords),
+    awardTeamXP(loserId, loserRecords),
     db.addBalance(winnerId, payout).catch(() => {}),
     db.addBalance(loserId, CONSOLATION).catch(() => {}),
-    awardTeamXP(winnerId, winnerRoster),
     db.logDuel(winnerId, loserId, 'warfare-team', 'warfare-team', roundNum - 1, payout).catch(() => {}),
   ]);
 
@@ -313,8 +356,10 @@ async function runWarfare(war) {
         `**Loser:** <@${loserId}> (${loserKOs} KOs)\n\n` +
         `🌸 **${winUser?.username ?? 'Winner'}** earns **${payout} Petals**!\n` +
         `🌸 **${loseUser?.username ?? 'Loser'}** gets **${CONSOLATION} Petals** consolation.\n` +
-        `⚡ **+${XP_WIN} XP** awarded to each winning fighter!` +
-        levelUpLines(levelUps, winnerRoster) +
+        `⚡ **Winning fighters earned ${totalFoughtXp(winnerRecords)} XP!**` +
+        levelUpLines(winnerLevelUps) +
+        `\n⚡ **Losing fighters earned ${totalFoughtXp(loserRecords)} XP!**` +
+        levelUpLines(loserLevelUps) +
         `\n\n**Round recap:**\n${summary}`,
       );
     await channel.send({ embeds: [finalEmbed] }).catch(() => {});
@@ -332,15 +377,14 @@ async function runBotWarfare(war) {
   const aLabel = `<@${war.challengerId}> (${war.challengerStance})`;
   const bLabel = `${BOT_EMOJI} Bot (${botStance})`;
 
-  const { aScore, bScore, roundSummary, roundNum } = await runGauntlet(war, aRoster, bRoster, aLabel, bLabel);
+  const { aScore, bScore, roundSummary, roundNum, aRecords } = await runGauntlet(war, aRoster, bRoster, aLabel, bLabel);
 
   const userWon      = aScore >= bScore;
-  const winnerRoster = userWon ? aRoster : bRoster;
   const winnerKOs    = userWon ? aScore  : bScore;
   const loserKOs     = userWon ? bScore  : aScore;
+  const userTotalXp  = totalFoughtXp(aRecords);
 
-  let levelUps = [];
-  if (userWon) levelUps = await awardTeamXP(war.challengerId, aRoster);
+  const levelUps = await awardTeamXP(war.challengerId, aRecords);
 
   const channel = await _client.channels.fetch(war.channelId).catch(() => null);
   if (channel) {
@@ -353,9 +397,8 @@ async function runBotWarfare(war) {
       .setTitle(userWon ? '🏆 You beat the bot team!' : `${BOT_EMOJI} Bot team wins!`)
       .setDescription(
         `**Your KOs:** ${loserKOs > winnerKOs ? winnerKOs : loserKOs} → **Bot KOs:** ${userWon ? loserKOs : winnerKOs}\n\n` +
-        (userWon
-          ? `⚡ **+${XP_WIN} XP** awarded to each of your fighters!` + levelUpLines(levelUps, aRoster)
-          : `No XP gained — better luck next time!`) +
+        `⚡ **Your fighters earned ${userTotalXp} XP** based on the opponents they fought!` +
+        levelUpLines(levelUps) +
         `\n\n**Round recap:**\n${summary}`,
       );
     await channel.send({ embeds: [finalEmbed] }).catch(() => {});
@@ -479,9 +522,10 @@ async function startBotWarfare(message) {
 
   const warId = genId();
 
-  // Pre-build 3 bot fighters
+  // Pre-build 3 bot fighters matching the player's best available tier
   const botLevel = computeBotLevel(harem);
-  const botRows  = await Promise.all([createBotRow(botLevel), createBotRow(botLevel), createBotRow(botLevel)]);
+  const botTier  = bestTier(harem);
+  const botRows  = await Promise.all([createBotRow(botLevel, botTier), createBotRow(botLevel, botTier), createBotRow(botLevel, botTier)]);
   const botStances = ['Aggressive', 'Defensive', 'Balanced', 'Berserker'];
   const botStance  = botStances[Math.floor(Math.random() * botStances.length)];
   const botTeam    = botRows.map(row => createFighter('BOT', row, botStance));
